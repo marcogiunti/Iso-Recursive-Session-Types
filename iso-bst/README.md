@@ -4,7 +4,7 @@
 ## Software prerequisite
 
 ```
-opam switch create ISOST
+opam switch create ISOST 5.2.0
 eval $(opam env --switch=ISOST)
 opam pin add coq 8.19.1
 ```
@@ -50,8 +50,8 @@ CONTEXT SUMMARY
 
 
 ## Structure of folder `theories`
-* [iso-bst.v](iso-bst.v) contains the [Subject Reduction Theorem](theories/iso-bst.v#L4333-L4389)
-* [operations.v](operations.v)  contains operations on Lists
-* [header.v](header.v) contains case tactics
-* [CpdtTactics.v](CpdtTactics.v) contains tactics written by Adam Chlipala
-* [LibTactics.v](LibTactics.v) contains tactics written by Arthur Chargueraud
+* [iso-bst.v](theories/iso-bst.v) contains the [Subject Reduction Theorem](theories/iso-bst.v#L4333-L4389)
+* [operations.v](theories/operations.v)  contains operations on Lists
+* [header.v](theories/header.v) contains case tactics
+* [CpdtTactics.v](theories/CpdtTactics.v) contains tactics written by Adam Chlipala
+* [LibTactics.v](theories/LibTactics.v) contains tactics written by Arthur Chargueraud

@@ -1231,7 +1231,15 @@ Inductive expr : Set :=
 | expr_succ : expr -> expr
 | expr_neg : expr -> expr.
 
-Inductive eval_expr : expr -> value -> Prop :=.
+Inductive eval_expr : expr -> value -> Prop :=
+| eval_val v:
+  eval_expr (expr_val v) v
+| eval_succ n:
+  eval_expr
+    (expr_succ (expr_val (value_nat n))) (value_nat (S n))
+| eval_neg b:
+  eval_expr
+    (expr_neg (expr_val (value_bool b))) (value_bool (negb b)).
 
 Inductive process_var : Set :=
 | pvar : nat -> process_var.
@@ -3994,6 +4002,21 @@ Proof with eauto.
     try destruct x;
     try destruct (n<? M)...
 Qed.
+
+Lemma  closed_cond e P1 P2:
+  closedP (proc_conditional e P1 P2) ->
+  closedP P1 /\ closedP P2.
+Proof with eauto using app_eq_nil.
+  introv CLS.
+  unfold closedP in *.
+  unfold fv, fvP in CLS;
+    fold fv in *;
+    fold fvP in *;
+    intuition;
+    try apply app_eq_nil in H;
+    try eapply app_eq_nil in H0;
+    intuition.
+Qed.
     
 (** Subject reduction *)
 Lemma subject_reduction U M a M' U':
@@ -4026,7 +4049,8 @@ Proof
     lts_proc_input, lts_proc_output,
     shift_closed, shift_disjoint,
     shift_disjointP, shift_types,
-    disjoint_l_cons.
+    disjoint_l_cons,
+    closed_cond.
   
   introv CLS WF TS LTS ELTS.
   gen U U'.
@@ -4256,7 +4280,9 @@ Proof
 
     inv ELTS.
     assert (IH: closedS (single_session (p, P1))).
-    unfold closedS in CLS. intuition.
+    unfold closedS in *;
+      destruct CLS as [CLS1 CLS2];
+      eapply closed_cond in CLS1 as [J _]...
     inverts TS as TS1 TS2.
     inverts TS1 as WF TC.
     inverts TC...
@@ -4269,7 +4295,9 @@ Proof
 
     inv ELTS.
     assert (IH: closedS (single_session (p, P1))).
-    unfold closedS in CLS. intuition.
+    unfold closedS in *;
+      destruct CLS as [CLS1 CLS2];
+      eapply closed_cond in CLS1 as [J _]...
     inverts TS as TS1 TS2.
     inverts TS1 as WF TC.
     inverts TC...

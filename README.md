@@ -12,7 +12,8 @@ There are two main axes.
    
 2. Iso-Recursive Multiparty Session Types.
    - Mechanised in [Rocq](https://github.com/rocq-prover/rocq).
-   - Verified in [Cameleer](https://github.com/ocaml-gospel/cameleer) / [Gospel](https://github.com/ocaml-gospel/gospel) / [Why3](https://gitlab.inria.fr/why3/why3).
+   - Verified in [Cameleer](https://github.com/ocaml-gospel/cameleer) / [Gospel](https://github.com/ocaml-gospel/gospel) / [Why3](https://gitlab.inria.fr/why3/why3):
+   [Zenodo artefact](https://doi.org/10.5281/zenodo.14621027)
    - In: Viktor Vafeiadis:
 Programming Languages and Systems - 34th European Symposium on Programming, ESOP 2025, Held as Part of the International Joint Conferences on Theory and Practice of Software, ETAPS 2025, Hamilton, ON, Canada, May 3-8, 2025, Proceedings, Part I. Lecture Notes in Computer Science 15694, Springer 2025, ISBN 978-3-031-91117-0   
 

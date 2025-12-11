@@ -6,7 +6,7 @@
 ```
 opam switch create ISOST 5.2.0
 eval $(opam env --switch=ISOST)
-opam pin add coq 8.19.1
+opam pin add coq 8.19.2
 ```
 
 ## Compilation
@@ -50,7 +50,7 @@ CONTEXT SUMMARY
 
 
 ## Structure of folder `theories`
-* [iso-bst.v](theories/iso-bst.v) contains the [Subject Reduction Theorem](theories/iso-bst.v#L4361-L4377)
+* [iso-bst.v](theories/iso_bst.v) contains the [Subject Reduction Theorem](theories/iso_bst.v#L4361-L4377)
 * [operations.v](theories/operations.v)  contains operations on Lists
 * [header.v](theories/header.v) contains case tactics
 * [CpdtTactics.v](theories/CpdtTactics.v) contains tactics written by Adam Chlipala

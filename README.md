@@ -27,4 +27,8 @@ cat README.md
 
 ## Iso-Recursive Multiparty Session Types
 
-To be uploaded.
+
+```
+cd iso-mpst
+cat README.md
+```

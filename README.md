@@ -1,6 +1,6 @@
 # Iso-Recursive-Session-Types
 
-This is the repository of [my ongoing work](http://ctp.di.fct.unl.pt/~mgiunti) on Iso-Recursive Session Types.
+This is the repository of [research](http://ctp.di.fct.unl.pt/~mgiunti) on Iso-Recursive Session Types.
 
 There are two main axes.
 

@@ -50,7 +50,7 @@ CONTEXT SUMMARY
 
 
 ## Structure of folder `theories`
-* [iso-bst.v](theories/iso_bst.v) contains the [Subject Reduction Theorem](theories/iso_bst.v#L4361-L4377)
+* [iso_bst.v](theories/iso_bst.v) contains the [Subject Reduction Theorem](theories/iso_bst.v#L4361-L4377)
 * [operations.v](theories/operations.v)  contains operations on Lists
 * [header.v](theories/header.v) contains case tactics
 * [CpdtTactics.v](theories/CpdtTactics.v) contains tactics written by Adam Chlipala

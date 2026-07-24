@@ -13,6 +13,8 @@ Require Import Coq.Logic.FinFun.
 Require Import Coq.Logic.FunctionalExtensionality.
 Require Import Lia.
 Require Import ZArith.
+Require Import FSets.FMapAVL.
+Require Import Structures.OrderedTypeEx.
 
 Require Import header.
 Require Import operations.
@@ -70,7 +72,7 @@ Function cat {A B}
         h y
     end.
 
-Function update {A B} (eqb : A -> A -> bool) (g : partial_fun A B)
+Definition update {A B} (eqb : A -> A -> bool) (g : partial_fun A B)
   (x : A) (s : B) : partial_fun A B :=
   fun y =>
     if eqb x y
@@ -100,7 +102,7 @@ Definition participant_beq p1 p2 :=
 
 Definition label_beq p1 p2 :=
   match p1, p2 with
-  | pyp r1, pyp r2 =>
+  | lbl r1, lbl r2 =>
       r1 =? r2
   end.
 
@@ -790,6 +792,8 @@ Inductive value : Set :=
 | value_bool : bool -> value
 | value_unit : value.
 
+Scheme Equality for value.
+
 Inductive expr : Set :=
 | expr_var : evar -> expr
 | expr_val : value -> expr
@@ -988,6 +992,8 @@ Inductive proc_action : Set :=
 | aunfold : participant -> proc_action
 | atau : option exchange -> proc_action.
 
+
+
 (** Type system *)
 Definition typ_env := partial_fun evar styp.
 Definition empty_env : typ_env := fun _ => None.
@@ -1117,49 +1123,19 @@ Definition diff d1 d2 (ld : list part_env) :=
       nth_error ld n2 = Some d2 /\
       n1 <> n2.
 
+
 Definition partition (d : part_env) (ld : list part_env) :=
   (forall d',
       In d' ld -> sub_env d' d) /\ 
     (forall d1 d2,
         In d1 ld -> In d2 ld -> diff d1 d2 ld->
         disjoint_domain d1 d2 /\ parties_disjoint d1 d2).
-        
+
 Definition partition_closed (d: part_env) :=
-forall p t, 
-d p = Some t ->
-(forall q, In q ( parties t) -> d q <> None).        
+  forall p t, 
+    d p = Some t ->
+    (forall q, In q ( parties t) -> d q <> None).        
 
-Parameter compliance : part_env -> Prop.
-
-Inductive types_session (g : typ_env) (h : proc_env)
-  : session -> part_env  -> Prop :=
-| ts_single p P T1:
-  wf T1 ->
-  types g h P T1 ->
-  types_session g h
-    (single_session (p, P))
-    (singleton p T1)
-(* Note that in the paper there is the notion of min_partition,
-while in the mechanisation we exploit the assumption that 
-compliance is only defined for minimal environments.
-Check the OCaml/Why3 implementation of compliance:
-let[@ghost] history1 = history @ [env]
-  in
-  if not (minimal env)
-  then
-    raise (NotMinimal history1)
-  else ...
- *)
-| ts_parallel s1 d1 s2 d2 ld pf:
-  types_session g h s1 d1 ->
-  types_session g h s2 d2 ->
-  partition (d1 @@ d2 @pf) ld ->
-  (forall d, In d ld -> partition_closed d /\ compliance d) ->
-  types_session g h 
-    (parallel_session s1 s2)
-    (d1 @@ d2 @pf).
-
-Hint Constructors types_session.
 
 (** Free variables of process *)
 Function fv p :=
@@ -2009,11 +1985,6 @@ Inductive elts : part_env -> proc_action -> part_env -> Prop :=
     (atau (Some (exc p l q)))
     ((d <- p #: tp') <- q #: tq').
 
-Axiom elts_compliance :
-  forall d1 a d2,
-    compliance d1 ->
-    elts d1 a d2 ->
-    compliance d2.
 
 Lemma stypes_empty G e t:
   stypes empty_env e t ->
@@ -2414,7 +2385,7 @@ Proof with eauto.
   rewrite BEQ in K...
 
   specialize DIS with y;
-     destruct DIS as (DIS1 &DIS2).
+    destruct DIS as (DIS1 &DIS2).
   unfold update.
   case_eq (beq x y);
     introv BEQ;
@@ -2422,7 +2393,7 @@ Proof with eauto.
     subst...
   intuition.
 Qed.
-  
+
 Lemma update_disjoint_domain_r {A B} (d1 : partial_fun A B) d2 beq x t (pf: forall p1 p2, beq p1 p2 = true <-> p1 = p2):
   disjoint_domain d1 d2 ->
   d2 x <> None ->
@@ -2465,18 +2436,1281 @@ Proof with eauto.
   rewrite swap_cat...
 Qed.
 
+(* REVISION -- JULY 2026 *)
+(* Added Lemma elts_dcompliance L3531 *)
+
+Inductive pol :=
+| input : pol
+| output : pol.
+
+Function coParticipant t :=
+  match t with
+  | typ_input p _ _ _
+  | typ_sum (typ_input p _ _ _) _ =>
+      Some (p, input)
+  | typ_output p _ _ _
+  | typ_sum (typ_output p _ _ _) _ =>
+      Some (p, output)
+  | _ =>
+      None
+  end.
+
+(*Definition mismatch d :=
+  exists p q pol_p pol_q tp tq,
+    d p = Some tp /\
+      d q = Some tq /\
+    coParticipant tp = Some (q, pol_q, tq) /\
+      coParticipant tq = Some (p, pol_p, tp) /\
+      (pol_p = pol_q \/
+         (pol_p = input /\ disjoint (tbranch_labels tp) (tselect_labels tq) \/
+            (pol_p = output /\
+              disjoint (tselect_labels tp) (tbranch_labels tq)))).
+
+Definition deadlock d :=
+  (forall a d1,
+      ~elts d a d1) /\
+    exists p t,
+      d p = Some t /\ t <> typ_end.
+ *)
+
+
+Definition nmismatch d :=
+  forall p q pol_p pol_q tp tq,
+    d p = Some tp ->
+    d q = Some tq ->
+    coParticipant tp = Some (q, pol_p) ->
+    coParticipant tq = Some (p, pol_q) ->
+    pol_p <> pol_q /\
+      (pol_p = input ->
+       disjoint (tbranch_labels tp) (tselect_labels tq) /\
+         (pol_p = output ->
+          disjoint (tselect_labels tp) (tbranch_labels tq))).
+
+Definition ndeadlock d :=
+  (exists a d1, elts d a d1) \/
+    forall p t, 
+      d p = Some t -> t  = typ_end.
+
+Definition key := nat.
+
+Definition decr := list (part_env * key).
+
+Function removeD k (l : decr) :=
+  match l with
+  | (d', k') :: tl =>
+      if k =? k'
+      then
+        tl
+      else
+        (d', k') :: removeD k tl
+  | [] =>
+      []
+  end.
+
+
+
+Definition osum ot1 ot2 :=
+  match ot1, ot2 with
+  | Some t1, Some t2 =>
+      Some (typ_sum t1 t2)
+  | Some _, None =>
+      ot1
+  | None, _ =>
+      ot2
+  end.
+
+Inductive sd_typ_lts : typ -> proc_action -> typ -> option typ -> Prop :=
+| sde_fold X T p :
+  sd_typ_lts
+    (typ_mu X T)
+    (aunfold p)
+    (X £ T)
+    None
+| sde_input p l v s t :
+  sd_typ_lts
+    (typ_input p l s t)
+    (ainput p l v)
+    t
+    None
+| sde_output p l v s t :
+  sd_typ_lts
+    (typ_output p l s t)
+    (aoutput p l v)
+    t
+    None
+| sde_branch_l t1 t2 p l v  t' opt1:
+  sd_typ_lts t1 (ainput p l v) t' opt1 ->
+  sd_typ_lts
+    (typ_sum t1 t2)
+    (ainput p l v)
+    t'
+    (osum opt1 (Some t2)) 
+| sde_branch_r t1 t2 p l v  t' opt2:
+  sd_typ_lts t2 (ainput p l v) t' opt2->
+  sd_typ_lts
+    (typ_sum t1 t2)
+    (ainput p l v)
+    t'
+    (osum (Some t1) opt2)
+| sde_select_l t1 t2 p l v t' opt1:
+  sd_typ_lts t1 (aoutput p l v) t' opt1 ->
+  sd_typ_lts
+    (typ_sum t1 t2)
+    (aoutput p l v)
+    t'
+    (osum opt1 (Some t2)) 
+| sde_select_r t1 t2 p l v t' opt2:
+  sd_typ_lts t2 (aoutput p l v) t' opt2->
+  sd_typ_lts
+    (typ_sum t1 t2)
+    (aoutput p l v)
+    t'
+    (osum (Some t1) opt2).
+
+Hint Constructors sd_typ_lts. 
+(* Mechanisation of Fig. 8. Environment removal is implemented via keys rather
+   than function equality, as equality of functions is undecidable *)
+
+Module NatMap := FMapAVL.Make(Nat_as_OT).
+
+Inductive sd_elts : decr -> part_env -> key -> proc_action -> decr -> part_env -> option part_env -> Prop :=
+| sd_rec D d1 k p t t':
+  In (d1, k) D ->
+  d1 p = Some t ->
+  sd_typ_lts t (aunfold p) t' None ->
+  sd_elts D d1 k (aunfold p) (removeD k D) (d1 <- p #: t') None
+| sd_com p q l v D d1 k tp tp' tq tq' opt1 opt2 opt_d2:
+  In (d1, k) D ->
+  d1 p = Some tp ->
+  d1 q = Some tq ->
+  sd_typ_lts tp (ainput q l v) tp' opt1->
+  sd_typ_lts tq (aoutput p l v) tq' opt2 ->
+  (opt1 <> None /\ opt2 <> None ->
+   exists t1 t2, opt1 = Some t1 /\ opt2 = Some t2 /\ opt_d2 =  Some ((d1 <- p #: t1) <- q #: t2)) ->
+  (opt1 = None \/ opt2 = None -> opt_d2 =  None) ->
+  sd_elts D d1 k  (atau (Some (exc p l q))) (removeD k D) ((d1 <- p #: tp') <- q #: tq') opt_d2.
+
+Hint Constructors sd_elts.
+
+Inductive oracle_result:=
+| Pair : participant -> participant -> oracle_result
+| Single : participant -> oracle_result
+| Void : oracle_result
+| Exc: oracle_result.
+
+
+Definition domain :=  list participant.
+
+(* Oracle receive domain in order to be able to define a decidable function *)
+Definition oracle := NatMap.t part_env -> key -> option proc_action -> domain -> oracle_result.
+
+Definition label_choice := option label -> list label -> list label -> option label.
+
+Function parties_of (d : part_env) l :=
+  match l with
+  | [] => Some []
+  | p :: tl =>
+      match d p, parties_of d tl with
+      | Some t, Some pts =>
+          Some (p :: parties t ++ pts)
+      | _, _ =>
+          None
+      end
+  end.
+
+Definition notMinimal (d : part_env) :=
+  exists l1 l2 p1 p2 pts1 pts2,
+    disjoint l1 l2 /\
+      parties_of d l1 = Some (p1 :: pts1) /\
+      parties_of d l1 = Some (p2 :: pts2) /\
+      disjoint (p1 :: pts1) (p2 :: pts2).
+
+(* Mechanisation of Figure 9 *)
+Inductive delts
+  (W : oracle) (Z : label_choice) :
+  NatMap.t part_env -> option proc_action ->
+  decr -> part_env -> key -> proc_action -> decr -> part_env -> option part_env -> Prop :=
+| se_recD  tbl a d k p d1 D D1 dom:
+  ~ notMinimal d ->
+  W (NatMap.add k d tbl) k a dom = Single p ->
+  sd_elts D d k (aunfold p) D1 d1 None ->
+  delts W Z (NatMap.add k d tbl) a D d k (aunfold p) D1 d1 None
+| se_comD tbl ha d k p q tp tq l D D1 d1 d2 dom hl: 
+  ~ notMinimal d ->
+  W (NatMap.add k d tbl) k ha dom = Pair p q->
+  d p = Some tp ->
+  d q = Some tq ->
+  Z hl (tbranch_labels tp) (tselect_labels tq) = Some l ->
+  sd_elts D d k (atau (Some (exc p l q ))) D1 d1 d2 ->
+  delts W Z (NatMap.add k d tbl) ha D d k (atau (Some (exc p l q ))) D1 d1 d2.
+
+Hint Constructors delts.
+
+Lemma delts_inv W Z tbl ha  D d k a D1 d1 D2:
+  delts W Z tbl ha D d k a D1 d1 D2 ->
+  exists tbl0,
+    tbl = NatMap.add k d tbl0.
+Proof with eauto.
+  introv DCL.
+  inv DCL;
+    try exists tbl0...
+Qed.
+
+Inductive dclosure
+  (W : oracle)  (Z : label_choice)
+  : NatMap.t part_env ->
+    decr -> part_env -> key -> list (option part_env) -> Prop :=
+| c_refl tbl D d k :
+  ~notMinimal d ->
+  (forall a D1 d1 d2 ha,
+      ~ delts W Z (NatMap.add k d tbl) ha D d k a D1 d1 d2) ->
+  dclosure W Z (NatMap.add k d tbl) D d k [Some d]
+| c_err tbl D d k :
+  notMinimal d ->
+  dclosure W Z (NatMap.add k d tbl) D d k [None]
+| c_tra D tbl d k k1 k2 a D1 d1 d2 l1 l2 ha :
+  delts W Z (NatMap.add k d tbl) ha D d k a D1 d1 (Some d2) ->
+  dclosure W Z (NatMap.add k1 d1 tbl) D1 d1 k1 l1 ->
+  dclosure W Z (NatMap.add k2 d2 tbl) D1 d2 k2 l2 ->
+  dclosure W Z (NatMap.add k d tbl) D d k (l1 ++ l2)
+| c_traOpt tbl ha D d k k1 a D1 d1 l:
+  delts W Z (NatMap.add k d tbl) ha D d k a D1 d1 None ->
+  dclosure W Z (NatMap.add k1 d1 tbl) D1 d1 k1 l ->
+  dclosure W Z (NatMap.add k d tbl) D d k l.
+
+Require Import Coq.Arith.Wf_nat.
+Require Import Coq.Wellfounded.Inverse_Image.
+
+Lemma dclosure_inv W Z tbl D d k l:
+  dclosure W Z tbl D d k l ->
+  exists tbl0,
+    tbl = NatMap.add k d tbl0.
+Proof with eauto.
+  introv DCL.
+  inv DCL;
+    try exists tbl0...
+Qed.
+
+
+Lemma removeD_length d k D:
+  In (d, k) D ->
+  length (removeD k D) < length D.
+Proof with eauto.
+  introv IN.
+  functional induction (removeD k D);
+    inv IN...
+  inv H...
+  rewrite Nat.eqb_refl in e0. discriminate.
+  eapply IHl in H; simpl; lia...
+Qed.
+
+Lemma delts_length  W tbl Z ha D d k a D1 d1 d2:
+  delts W Z tbl ha D d k a D1 d1 d2 ->
+  length D1 < length D.
+Proof with eauto using removeD_length .
+  introv LTS.
+  induction LTS...
+  inv H1...
+  inv H4...
+Qed.  
+
+Lemma dclosure_exists :
+  forall  W tbl Z D d k,
+  exists l, dclosure  W Z (NatMap.add k d tbl) D d k l.
+Proof with eauto using delts_length.
+  intros.
+  revert d k.
+  pattern D.
+  apply
+    (well_founded_induction
+       (wf_inverse_image
+          decr nat
+          lt
+          (fun D => length D)
+          lt_wf)).
+  intros.
+  clear D.
+
+  destruct (classic (notMinimal d)) as [Hnm | Hnm].
+
+  - (* notMinimal d *)
+    exists [None:option part_env].
+    constructor.
+    exact Hnm.
+
+  - (* ~ notMinimal d *)
+
+    remember (exists a D1 d1 d2 ha,
+                 delts  W Z (NatMap.add k d tbl) ha x d k a D1 d1 d2) as K.
+    destruct (classic K) as [EX | NEX].
+    
+    subst.
+    unpack.
+
+    + 
+      assert (Hlt : length D1 < length x)...
+      
+      eapply H with (d := d1) (k := 1)in Hlt as K1...
+      unpack...
+      case_eq d2; intros d3. intros.
+      eapply H with (d := d3) (k := 3)in Hlt as K2...
+      unpack...
+      exists (l ++ l0);
+        subst...
+      eapply c_tra with (ha := ha)(a := a)...
+
+      eapply H with (d := d1) (k := 1)in Hlt as K1...
+      unpack...
+
+      exists l0; subst...
+      econstructor...
+      
+    + (* no transition *)
+      subst.
+      exists [Some d].
+      apply c_refl...
+      introv ABS.
+      assert
+        (exists
+            (a : proc_action) (D1 : decr) (d1 : part_env) 
+            (d2 : option part_env) (ha : option proc_action),
+            delts W Z (NatMap.add k d tbl) ha x d k a D1 d1 d2).
+      repeat eexists...
+      contradiction.
+Qed.
+
+Lemma dclosure_notMinimal  W tbl Z D d k l x:
+  dclosure  W tbl Z D d k l ->
+  In x l ->
+  x <> None ->
+  ~ notMinimal d.
+Proof with eauto.
+  introv DCL DIFF ABS.
+  induction DCL...
+  inv DIFF...
+  eapply in_app_iff in DIFF as [L | R];
+    try inv H...
+  inv H...
+Qed.  
+
+
+(* Compliance preserved by oracles that accept hints *)
+Definition hinted (W : oracle) : Prop :=
+  forall tbl (k : key) ha dom,
+    match ha,  NatMap.find  (elt:=part_env) k tbl with
+    | Some (aunfold p), Some d   =>
+        match d p with
+        | Some (typ_mu X T) =>
+            W tbl k ha dom = Single p
+        | _ =>
+            True
+        end
+    | Some (atau (Some (exc p l q))), Some d =>
+        match d p, d q with
+        | Some tp, Some tq =>
+            match hd_error (top tp), hd_error (top tq) with
+            | Some q1, Some p1 =>
+                if (pbeq p p1 && pbeq q q1)
+                then
+                  W tbl k ha dom = Pair p q
+                else
+                  True
+            | _, _ =>
+                True
+            end
+        |_, _ =>
+           True
+        end
+    | _, _ =>
+        True
+    end.
+
+
+Definition fair (W : oracle) :=
+  (forall tbl d k p q opt_act dom,
+      W tbl k  opt_act dom = Pair p q ->
+      NatMap.find (elt:=part_env) k tbl = Some d ->
+      exists tp tq,
+        d p = Some tp /\
+          d q = Some tq /\
+          hd_error (top tp) = Some q /\
+          hd_error (top tq) = Some p) /\
+    (forall tbl d k p opt_act dom,
+        W tbl k  opt_act dom = Single p ->
+        NatMap.find (elt:=part_env) k tbl = Some d ->       
+        exists X T,
+          d p = Some (typ_mu X T)) /\
+    (forall tbl d k opt_act dom,
+        W tbl k opt_act dom = Void ->
+        NatMap.find (elt:=part_env) k tbl = Some d ->
+        (forall p t X T,
+            In p dom ->
+            d p = Some t ->
+            t <> typ_mu X T) /\
+          (forall p q tp tq,
+              In p dom ->
+              In q dom ->
+              p <> q ->
+              d p = Some tp ->
+              d q = Some tq  ->
+              hd_error (top tp) <> Some q \/
+                hd_error (top tq) <>  Some p)).
+
+Function label_In lb ll :=
+  match ll with
+  | [] =>
+      false
+  | lb2 :: tl =>
+      lbeq lb lb2 ||
+        label_In lb tl
+  end.
+
+Function Z_lt (ol : option label) ll1 ll2 :=
+  match ll1, ll2 with
+  | lbl n1 as l1 :: tl1, lbl n2 as l2 :: tl2 =>
+      if n1 <? n2 then
+        Some l1
+      else if n2 <? n1
+           then
+             Some l2
+           else
+             Z_lt ol tl1 tl2
+  | l1 :: _, _ =>
+      Some l1
+  | _, l2 :: _ =>
+      Some l2
+  | _, _ =>
+      None
+  end.
+
+Function Z_canonical ol ll1 ll2 :=
+  match ol with
+  | Some l =>
+      if label_In l ll1 && label_In l ll2
+      then
+        Some l
+      else
+        Z_lt ol ll1 ll2
+  | _ =>
+      Z_lt ol ll1 ll2
+  end.
+
+
+Definition hintedL (Z : label_choice) :=
+  forall l ll1 ll2,
+    In l ll1 ->
+    In l ll2  ->
+    Z (Some l) ll1 ll2 = Some l.
+
+Lemma label_In_nin l ll1:
+  label_In l ll1 = false ->
+  ~In l ll1.
+Proof with eauto.
+  intros.
+  functional induction (label_In l ll1)...
+  eapply orb_false_iff in H; unpack...
+  introv ABS...
+  inv ABS...
+  assert (lbeq l l = true).
+  eapply label_beq_eq...
+  rewrite H in *. discriminate.
+  eapply IHb...
+Qed.
+
+Lemma hintedL_canonical: hintedL (Z_canonical).
+Proof with eauto.
+  unfold Z_canonical, hintedL.
+  intros.
+  case_eq (label_In l ll1 && label_In l ll2);
+    introv EQ...
+  eapply andb_false_iff in EQ;
+    destruct EQ;
+    eapply label_In_nin in H1; contradiction.
+Qed.  
+
+
+Function dcompliance d1 k D  :=
+  (forall  W tbl Z l,
+      hinted W ->
+      fair W ->
+      hintedL Z ->
+      dclosure  W Z tbl D d1 k l ->
+      ~In None l /\
+        (forall d,
+            In (Some d) l -> 
+            nmismatch d /\
+              ndeadlock d)).
+
+Function W_fifo tbl k (ha : option proc_action) dom :=
+  match dom with
+  | [] =>
+      Void
+  | p :: tl =>
+      match NatMap.find (elt:=part_env ) k tbl with
+      | Some d =>
+          match d p with
+          | Some (typ_mu X T) =>
+              Single p
+          | Some tp =>
+              match top tp with
+              | q :: _ =>
+                  if pbeq p q
+                  then
+                    match d q with
+                    | Some tq =>
+                        match top tq with
+                        | r :: _ =>
+                            if pbeq p r
+                            then
+                              Pair p q
+                            else
+                              W_fifo tbl k ha tl
+                        | _ =>
+                            W_fifo tbl k ha tl
+                        end
+                    | _ =>
+                        Exc
+                    end
+                  else
+                    Exc
+              | _ =>
+                  W_fifo tbl k ha tl
+              end
+          | _ =>
+              Exc
+          end
+      | _ =>
+          Exc
+      end
+  end.
+
+
+Lemma fifo_pair tbl k opt_act dom p q d tp tq :
+  NatMap.find (elt:=part_env) k tbl = Some d ->
+  In p dom ->
+  p <> q ->
+  d p = Some tp ->
+  d q = Some tq ->
+  hd_error (top tp) = Some q ->
+  hd_error (top tq) = Some p ->
+  W_fifo tbl k opt_act dom <> Void.
+Proof with eauto.
+  introv FIND IN1 DIFF EQ1 EQ2 HD1 HD2.
+  dependent induction dom...
+  inv IN1...
+  -  
+    unfold W_fifo; fold W_fifo.
+    rewrite FIND, EQ1.
+    destruct tp...
+    + simpl in HD1; try discriminate.
+    + simpl in HD1; try discriminate.
+    + case_eq (top (typ_sum tp1 tp2)); introv TEQ;
+        rewrite TEQ in *...
+      simpl in HD1; try discriminate.
+      case_eq (pbeq p p0); introv PBEQ...
+      rewrite participant_beq_eq in *; subst.
+      rewrite EQ1, TEQ.
+      rewrite participant_beq_eq_true; discriminate...
+      discriminate.
+    + simpl...
+      case_eq (pbeq p p0); introv PBEQ...
+      rewrite participant_beq_eq in *; subst.
+      rewrite EQ1.
+      simpl...
+      rewrite participant_beq_eq_true; discriminate...
+      discriminate.
+    + simpl...
+      case_eq (pbeq p p0); introv PBEQ...
+      rewrite participant_beq_eq in *; subst.
+      rewrite EQ1.
+      simpl...
+      rewrite participant_beq_eq_true; discriminate...
+      discriminate.
+    + simpl in *; discriminate...
+  - unfold W_fifo; fold W_fifo.
+    rewrite FIND.
+    case_eq (d a); introv EQ...
+    destruct t0; try discriminate...
+    destruct (top (typ_sum t0_1 t0_2)); try discriminate...
+    destruct (pbeq a p0); try discriminate...
+    destruct (d p0); try discriminate...
+    destruct (top t0); try discriminate...
+    destruct (pbeq a p1); try discriminate...
+    simpl...
+    destruct (pbeq a p0); try discriminate...
+    destruct (d p0); try discriminate...
+    destruct (top t1); try discriminate...
+    destruct (pbeq a p1); try discriminate...
+    simpl...
+    destruct (pbeq a p0); try discriminate...
+    destruct (d p0); try discriminate...
+    destruct (top t1); try discriminate...
+    destruct (pbeq a p1); try discriminate...
+    discriminate.
+Qed.
+
+Lemma fifo_fair: fair W_fifo.
+Proof with eauto using fifo_pair.
+  unfold fair; repeat split; intros.
+  - gen p q d.
+    functional induction ( W_fifo tbl k opt_act dom);
+      intros;
+      try discriminate;
+      try inv H;
+      try rewrite H0 in *;
+      try inv e0;
+      try rewrite participant_beq_eq in *;
+      subst...
+    destruct tp...
+    simpl in e2; try discriminate...
+    simpl in e2; try discriminate...
+    repeat eexists...
+    rewrite e5...
+    rewrite e5...
+    repeat eexists...
+    try rewrite e2...
+    rewrite e5...
+    simpl in e2; inv e2.
+    repeat eexists...
+    try rewrite e4...
+    rewrite e5...
+    simpl in e2; try discriminate...
+    inv e2...
+    repeat eexists...
+    rewrite e5...
+    rewrite e5...
+    simpl in e2; try discriminate...
+
+  -  gen p d.
+     functional induction ( W_fifo tbl k opt_act dom);
+       intros;
+       try discriminate;
+       try inv H;
+       try rewrite H0 in *;
+       try inv e0;
+       try rewrite participant_beq_eq in *;
+       subst...
+
+  -  gen p d.
+     functional induction ( W_fifo tbl k opt_act dom);
+       intros;
+       try discriminate;
+       try inv H;
+       try rewrite H0 in *;
+       try inv e0;
+       try rewrite participant_beq_eq in *;
+       subst...
+     + destruct tp...
+       simpl in e2; try discriminate...
+       inv H1;
+         try rewrite H2 in *;
+         inv e1;
+         try discriminate...
+       all:
+         inv H1;
+         try rewrite H2 in *;
+         inv e1;
+         try discriminate...
+     + destruct tp...
+       simpl in e2; try discriminate...
+       inv H1;
+         try rewrite H2 in *;
+         inv e1;
+         try discriminate...
+       all:
+         inv H1;
+         try rewrite H2 in *;
+         inv e1;
+         try discriminate...
+     + destruct tp...
+       simpl in *; try discriminate...
+       inv H1;
+         try rewrite H2 in *;
+         inv e1;
+         try discriminate...
+       all:
+         inv H1;
+         try rewrite H2 in *;
+         inv e1;
+         try discriminate...
+  - assert (hd_error (top tp) = Some q /\ hd_error (top tq) = Some p -> False).
+    introv [ABS1 ABS2]...
+    eapply fifo_pair with (opt_act := opt_act) in H1...
+    eapply NNPP...
+    intuition.
+Qed.
+
+
+Function W_canonical tbl k ha dom :=
+  match ha,  NatMap.find (elt:=part_env ) k tbl with
+  | Some (aunfold p), Some d   =>
+      match d p with
+      | Some (typ_mu X T) =>
+          Single p
+      | _ =>
+          W_fifo tbl k ha dom    
+      end
+  | Some (atau (Some (exc p l q))), Some d =>
+      match d p, d q with
+      | Some tp, Some tq =>
+          match top tp, top tq with
+          | q1 :: _, p1 :: _ =>
+              if pbeq p p1 && pbeq q q1
+              then
+                Pair p q
+              else
+                W_fifo tbl k ha dom
+          |_, _ =>
+             W_fifo tbl k ha dom
+          end
+      | _, _ =>
+          W_fifo tbl k ha dom
+      end
+  | _, _ =>
+      W_fifo tbl k ha dom
+  end.
+
+
+Ltac   try_fifo :=
+  try
+    match goal with
+    | H : W_fifo _ _ _ _ = _ |- _ => 
+        try eapply fifo_fair;
+        eauto
+    | _ =>
+        try discriminate
+    end;
+  eauto.
+
+Lemma hinted_canonical :
+  hinted W_canonical /\ fair W_canonical.
+Proof with eauto using fifo_fair.
+  intros.
+
+  assert (HINT: hinted W_canonical).
+  unfold hinted; intros.
+  - destruct ha. destruct p...
+    + intros.
+      subst...
+      case_eq (NatMap.find (elt:=part_env) k tbl);
+        intros...
+      case_eq (p0 p); intros...
+      case_eq t0; intros; subst...
+      unfold W_canonical.
+      rewrite H, H0...
+    + case_eq o; intros...
+      case_eq e; intros; subst...
+      case_eq( NatMap.find (elt:=part_env) k tbl); intros...
+      case_eq(p1 p); intros...
+      case_eq(p1 p0); intros...
+      case_eq (hd_error (top t0)); intros...
+      case_eq (hd_error (top t1)); intros...
+      case_eq (pbeq p p3 && pbeq p0 p2); intros...
+      rewrite andb_true_iff in H4; unpack; rewrite participant_beq_eq in *; subst.
+      * unfold W_canonical...
+        rewrite H,H0,H1.
+        case_eq (top t0); introv EQ; rewrite EQ in *; try discriminate...
+        case_eq (top t1); introv EQ1; rewrite EQ1 in *; try discriminate...
+        unfold hd_error in *.
+        inv H2; inv H3.
+        repeat rewrite participant_beq_eq_true; simpl...
+    + tauto.
+  -   split...  
+      unfold fair; repeat split; intros.
+      unfold W_canonical in H.
+      destruct opt_act; try discriminate...
+      destruct p0...
+      eapply fifo_fair...
+      eapply fifo_fair...
+      rewrite H0 in *.
+      case_eq (d p0); introv EQ...
+      rewrite EQ in *.
+      destruct t0;
+        try discriminate...
+      all: try_fifo.
+      try erewrite EQ in *;
+        try discriminate;
+        try eapply fifo_fair...
+      case_eq o; introv EQ; subst...
+      case_eq e; introv EQ; subst...
+      rewrite H0 in *.
+      case_eq (d p0); introv EQ; rewrite EQ in *...
+      case_eq (d p1); introv EQ1; rewrite EQ1 in *...
+      case_eq (top t0); introv EQ2; rewrite EQ2 in *...
+      eapply fifo_fair...
+      case_eq (top t1); introv EQ3; rewrite EQ3 in *...
+      eapply fifo_fair...
+      case_eq (pbeq p0 p3 && pbeq p1 p2); introv EQ4;
+        rewrite EQ4 in *;
+        try discriminate...
+      inv H.
+      rewrite andb_true_iff in EQ4; unpack; rewrite participant_beq_eq in *; subst.
+      repeat eexists...
+      rewrite EQ2...
+      rewrite EQ3...
+      try eapply fifo_fair...
+      try eapply fifo_fair...
+      try eapply fifo_fair...
+      try eapply fifo_fair...
+
+      unfold W_canonical in H.
+      destruct opt_act;
+        try destruct p0;
+        try_fifo.
+      rewrite H0 in *.
+      case_eq (d p0); introv EQ; rewrite EQ in *.
+      destruct t0;
+        try_fifo.
+      inv H...
+      all:
+        try_fifo.
+      destruct o;
+        try_fifo.
+      destruct e;
+        try_fifo.
+      rewrite H0 in *...
+      destruct (d p0);
+        try_fifo.
+      destruct (d p1);
+        try_fifo.
+      destruct (top t0); try_fifo.
+      destruct (top t1); try_fifo.
+      case_eq (pbeq p0 p3 && pbeq p1 p2); introv EQ4;
+        rewrite EQ4 in *;
+        try discriminate...
+      all:    try_fifo.
+
+      unfold W_canonical in H.
+
+      destruct opt_act; try discriminate...
+      destruct p0...
+      eapply fifo_fair...
+      eapply fifo_fair...
+      rewrite H0 in *.
+      case_eq (d p0); introv EQ...
+      rewrite EQ in *.
+      destruct t1;
+        try discriminate;
+        try_fifo.
+      try erewrite EQ in *;
+        try discriminate;
+        try_fifo...
+      case_eq o; introv EQ; subst...
+      case_eq e; introv EQ; subst...
+      rewrite H0 in *.
+      case_eq (d p0); introv EQ; rewrite EQ in *...
+      case_eq (d p1); introv EQ1; rewrite EQ1 in *...
+      case_eq (top t1); introv EQ2; rewrite EQ2 in *;
+        try_fifo...
+      case_eq (top t2); introv EQ3; rewrite EQ3 in *;
+        try_fifo...
+      case_eq (pbeq p0 p3 && pbeq p1 p2); introv EQ4;
+        rewrite EQ4 in *;
+        try discriminate...
+      inv H.
+      all:try_fifo.
+
+      unfold W_canonical in H.
+
+      destruct opt_act; try discriminate...
+      destruct p0...
+      eapply fifo_fair...
+      eapply fifo_fair...
+      rewrite H0 in *.
+      case_eq (d p0); introv EQ...
+      rewrite EQ in *.
+      destruct t0;
+        try discriminate;
+        try_fifo.
+      try erewrite EQ in *;
+        try discriminate;
+        try_fifo...
+      case_eq o; introv EQ; subst...
+      case_eq e; introv EQ; subst...
+      rewrite H0 in *.
+      case_eq (d p0); introv EQ; rewrite EQ in *...
+      case_eq (d p1); introv EQ1; rewrite EQ1 in *...
+      case_eq (top t0); introv EQ2; rewrite EQ2 in *;
+        try_fifo...
+      case_eq (top t1); introv EQ3; rewrite EQ3 in *;
+        try_fifo...
+      case_eq (pbeq p0 p3 && pbeq p1 p2); introv EQ4;
+        rewrite EQ4 in *;
+        try discriminate...
+      inv H.
+      all:try_fifo.
+Qed.
+
+
+Lemma dcompliance_minimal d1 k D:
+  dcompliance d1 k D ->
+  ~ notMinimal d1.
+Proof with eauto using in_eq, hintedL_canonical.
+  introv CMP ABS.
+  assert (K := hinted_canonical).
+  destruct K.
+  unfold dcompliance in CMP.
+  remember
+    (NatMap.add k d1  (NatMap.empty part_env))as tbl.
+  assert ( dclosure W_canonical Z_canonical tbl D d1 k [None]).
+  subst;
+    econstructor...
+  eapply CMP  in H...
+  assert (In (None : option part_env) [None])...
+  unpack...
+Qed.  
+
+Lemma aunfold_inv t p t':
+  wf t ->
+  typ_lts t (aunfold p) t' ->
+  exists X T,
+    t = typ_mu X T /\
+      t' = X £ T.
+Proof with eauto.
+  introv WF LTS.
+  dependent induction LTS...
+Qed.
+
+Definition wfE (d1 : part_env) :=
+  (forall p t, d1 p = Some t -> wf t).
+
+Lemma typ_lts_sd_typ_lts t a t' :
+  typ_lts t a t' ->
+  exists opt,
+    sd_typ_lts t a t' opt.
+Proof with eauto.
+  introv LTS.
+  dependent induction LTS;
+    unpack;
+    try case_eq opt;
+    try introv EQ...
+Qed.
+
+Lemma ex_sd_com tp tp' q l v tq tq' p d1 opt0 opt1 D k:
+  sd_typ_lts tp (ainput q l v) tp' opt0 ->
+  sd_typ_lts tq (aoutput p l v) tq' opt1 ->
+  d1 p = Some tp ->
+  d1 q = Some tq ->
+  In (d1, k) D ->
+  exists opt,
+    sd_elts D d1 k (atau (Some (exc p l q))) 
+      (removeD k D) ((d1 <- p #: tp') <- q #: tq') opt.   
+Proof with eauto.
+  introv LTS1 LTS2 EQ1 EQ2 IN.
+  case_eq opt0; introv A...
+  case_eq opt1; introv B...
+  exists (Some ((d1 <- p #: t0) <- q #: t1))...
+  econstructor...
+  introv [ABS | ABS]...
+  rewrite A in *; discriminate.
+  rewrite B in *; discriminate.
+  exists (None : option part_env)...
+  econstructor...
+  introv [ABS1  ABS2]...
+  rewrite B in *; contradiction.
+  exists (None : option part_env)...
+  econstructor...
+  introv [ABS1  ABS2]...
+  rewrite A in *; contradiction.
+Qed.
+
+Lemma hinted_unfold W k1 d1 tbl p X T l:
+  hinted W ->
+  d1 p = Some (typ_mu X T) ->
+  W (NatMap.add k1 d1 tbl) k1 (Some (aunfold p)) l
+  = Single p.        
+Proof with eauto.
+  introv HINT EQ.
+  unfold hinted in HINT.
+  specialize HINT with (NatMap.add k1 d1 tbl) k1 (Some (aunfold p)) l.
+  simpl in HINT...
+  erewrite NatMap.find_1 with (e := d1)in HINT...
+  erewrite EQ in HINT...
+  eapply NatMap.add_1...
+Qed.
+
+Lemma typ_lts_input_top tp q l0 v tp' :
+  wf tp ->
+  typ_lts tp (ainput q l0 v) tp' ->
+  exists l,
+    top tp = q :: l.
+Proof with eauto using wf_sum, in_eq.
+  intros WF LTS.
+  dependent induction LTS;
+    simpl...
+  assert (IH : wf t1)...
+  eapply wf_sum in WF as [K _]...
+  eapply IHLTS in IH; unpack...
+  rewrite H.
+  exists (l ++ top t2)...
+  assert (IH : wf t2)...
+  eapply wf_sum in WF as [_ K]...
+  eapply IHLTS in IH; unpack...
+  unfold wf, ndl in WF;
+    fold ndl in WF.
+  intuition.
+  unfold tbranch in H0.
+  unpack.
+  unfold top in H1. fold top in H1.
+  unfold single_party in H1.
+  unpack.
+  destruct (top t1)...
+  exists (l1 ++ top t2)...
+  assert (p = q)...
+  eapply  H5...
+  right;  eapply in_app_iff; right; rewrite H...
+  subst...
+  assert False.
+  eapply tselect_input_false...
+  contradiction.
+Qed.
+
+Lemma typ_lts_output_top tp q l0 v tp' :
+  wf tp ->
+  typ_lts tp (aoutput q l0 v) tp' ->
+  exists l,
+    top tp = q :: l.
+Proof with eauto using wf_sum, in_eq.
+  intros WF LTS.
+  dependent induction LTS;
+    simpl...
+  assert (IH : wf t1)...
+  eapply wf_sum in WF as [K _]...
+  eapply IHLTS in IH; unpack...
+  rewrite H.
+  exists (l ++ top t2)...
+  assert (IH : wf t2)...
+  eapply wf_sum in WF as [_ K]...
+  eapply IHLTS in IH; unpack...
+  unfold wf, ndl in WF;
+    fold ndl in WF.
+  intuition.
+  assert False.
+  eapply tbranch_output_false...
+  contradiction.
+  unfold tselect in H0.
+  unpack.
+  unfold top in H1. fold top in H1.
+  unfold single_party in H1.
+  unpack.
+  destruct (top t1)...
+  exists (l1 ++ top t2)...
+  assert (p = q)...
+  eapply  H5...
+  right;  eapply in_app_iff; right; rewrite H...
+  subst...
+Qed.
+
+
+Lemma hinted_pair tp tq q p l0 v tp' tq'  d1 k1 tbl W l:
+  hinted W ->
+  wf tp ->
+  wf tq ->
+  typ_lts tp (ainput q l0 v) tp' ->
+  typ_lts tq (aoutput p l0 v) tq' ->
+  d1 p = Some tp ->
+  d1 q = Some tq -> 
+  W (NatMap.add k1 d1 tbl) k1 (Some (atau (Some (exc p l0 q)))) l
+  = Pair p q.
+Proof with eauto.
+  introv HINT WF1 WF2 LTS1 LTS2 EQ1 EQ2.
+  unfold hinted in HINT.
+  specialize HINT with (NatMap.add k1 d1 tbl) k1 (Some (atau (Some (exc p l0 q)))) l.
+  simpl in HINT...
+  erewrite NatMap.find_1 with (e := d1)in HINT...
+  erewrite EQ1,EQ2 in HINT...
+  eapply typ_lts_input_top in LTS1...
+  eapply typ_lts_output_top in LTS2...
+  unpack...
+  rewrite H0, H in HINT; simpl in HINT...
+  repeat rewrite participant_beq_eq_true in HINT;
+    simpl in HINT...
+  eapply NatMap.add_1...
+Qed.
+
+Lemma elts_dcompliance d1 a d2 k1 k2 D:
+  wfE d1 ->
+  In (d1, k1) D ->
+  dcompliance d1 k1 D ->
+  elts d1 a d2 ->
+  dcompliance d2 k2 (removeD k1 D).
+Proof
+  with
+  eauto
+  using
+  dclosure_notMinimal,
+    NatMap.add_1,
+    dcompliance_minimal,
+    dclosure_exists,
+    hinted_unfold,
+    hinted_pair,
+    hintedL_canonical.
+  
+  introv WF IN COMPL ELTS.
+  assert (DMIN : ~ notMinimal d1)...
+  unfold dcompliance in *; unpack; intros...
+  eapply dclosure_inv in H2 as K.
+  unpack.
+  subst.
+  inv ELTS...
+  - eapply aunfold_inv in H3; unpack; subst...
+
+    remember (X £ T) as t'.
+    remember (NatMap.add k2 (d1 <- p #: t') tbl0) as tbl.
+    assert
+      (DLTS: delts W Z
+               (NatMap.add k1 d1 tbl0) (Some (aunfold p)) D d1 k1 (aunfold p) (removeD k1 D) (d1 <- p #: t') None).
+    eapply se_recD with (dom := [])...
+    repeat econstructor...
+    subst...
+    assert (DCLS: dclosure W Z (NatMap.add k1 d1 tbl0) D d1 k1 l).
+    subst.
+    eapply c_traOpt with (k1 := k2)...
+    eapply COMPL...
+  - 
+    eapply typ_lts_sd_typ_lts in H3 as K1;
+      unpack...
+    eapply typ_lts_sd_typ_lts in H4 as K2;
+      unpack...
+    eapply ex_sd_com  in H6 as K; unpack...
+    eapply se_comD
+      with (W := W) (Z := Z) (tbl := tbl0)
+           (hl := Some l0)
+           (ha := Some (atau (Some (exc p l0 q))))
+           (dom := [])
+      in H9 as LTS...
+    
+    
+    case_eq opt1; intros d2; try introv  EQ; subst...
+
+    remember  (removeD k1 D) as D1.
+    assert
+      (exists l1,
+          dclosure
+            W Z (NatMap.add (S k1) d2 tbl0) D1
+            d2
+            (S k1)
+            l1)...
+    unpack.
+    eapply c_tra with (l1 := l) (l2 := l1) in LTS...
+    eapply COMPL in LTS;
+      unpack...
+    split.
+    try introv ABS...
+    assert (In None (l ++ l1))...
+    eapply in_app_iff; left...
+    introv IN2.
+    eapply H12...
+    eapply in_app_iff; left...
+
+    eapply c_traOpt with (l := l)  in LTS...
+    eapply H1...
+    eapply lts_input...
+    eapply lts_output...
+Qed.
+
+Function proc_action_beq a b :=
+  match a, b with
+  | ainput p1 l1 v1, ainput p2 l2 v2
+  | aoutput p1 l1 v1, aoutput p2 l2 v2 =>
+      pbeq p1 p2 && lbeq l1 l2 && value_beq v1 v2
+  | aunfold p1, aunfold p2 =>
+      pbeq p1 p2
+  |atau (Some (exc p1 l1 q1)),   atau (Some (exc p2 l2 q2)) =>
+     pbeq p1 p2 && lbeq l1 l2 && pbeq q1 q2
+  | atau None, atau None =>
+      true
+  | _, _ =>
+      false
+  end.
+
+Notation abeq := proc_action_beq.
+
+Function removeA a acts :=
+  match acts with
+  | b :: tl =>
+      if abeq a b then tl else b :: removeA a tl
+  | [] => []
+  end.
+
+
+
+Definition complete (d : part_env) (ld : list part_env) :=
+  (forall p,
+      d p <> None ->
+      exists d1,
+        In d1 ld /\ d1 p <> None).
+
+Definition admissible (ld : list part_env) :=
+  forall d,
+    In d ld ->
+    wfE d.
+
+Inductive types_session (g : typ_env) (h : proc_env)
+  : session -> part_env -> Prop :=
+| ts_single p P T1:
+  wf T1 ->
+  types g h P T1 ->
+  types_session g h
+    (single_session (p, P))
+    (singleton p T1)
+| ts_parallel s1 d1 s2 d2 ld pf:
+  types_session g h s1 d1  ->
+  types_session g h s2 d2 ->
+  partition (d1 @@ d2 @pf) ld ->
+  (complete (d1 @@ d2 @pf) ld  /\ admissible  ld) -> 
+  (forall d D k,
+      In d ld ->
+      partition_closed d /\
+        (In (d, k) D ->
+         dcompliance d k D)) ->
+  types_session g h 
+    (parallel_session s1 s2)
+    (d1 @@ d2 @pf).
+
+Hint Constructors types_session.
+
+Lemma complete_swap d1 d2 pf ld:
+  complete (d1 @@ d2 @ pf) ld ->
+  complete (d2 @@ d1 @ swap_disjoint_domain d1 d2 pf) ld.
+Proof with eauto.
+  introv CPL.
+  unfold complete in *; introv DIFF.
+  unfold cat in DIFF.
+  case_eq (d2 p); introv EQ1; rewrite EQ1 in *.
+  assert ( (d1 @@ d2 @ pf) p <> None).
+  introv ABS.
+  unfold cat in ABS.
+  case_eq (d1 p); introv ABS2; rewrite ABS2 in *;
+    try discriminate.
+  rewrite ABS in *; discriminate.
+  eapply CPL in H;
+    unpack...
+  assert ( (d1 @@ d2 @ pf) p <> None).
+  introv ABS.
+  unfold cat in ABS.
+  case_eq (d1 p); introv EQ;
+    rewrite EQ in *; try contradiction.
+  eapply CPL in H;
+    unpack...
+Qed.
+
 Lemma types_struct G H M1 M2 U:
-  types_session G H M1 U ->
+  types_session G H M1 U->
   proc_equiv M1 M2 ->
   types_session G H M2 U.
-Proof with eauto.
+Proof with eauto using complete_swap.
   introv TC ST.
   destruct ST...
   inv TC...
   rewrite swap_cat...
   econstructor...
   apply swap_partition...
+  unpack;
+    split...
 Qed.
+
+
 
 
 Lemma ndm_sum_l r p1 p2:
@@ -3509,6 +4743,7 @@ Function update_partition (ld : list part_env) x t :=
       end
   end.
 
+
   
 Lemma disjoint_incl {A}: forall (l1 l2 m : list A),
     disjoint l1 l2 ->
@@ -3528,40 +4763,40 @@ Proof with eauto using in_eq.
 Qed.
 
 Lemma participants_subst T X U: 
-incl 
-(parties (substT T X U))
-(parties T ++ parties U).
+  incl 
+    (parties (substT T X U))
+    (parties T ++ parties U).
 Proof with eauto using incl_refl, incl_nil_l, 
-incl_appl, incl_appr, incl_app_app, in_eq.
-functional induction (substT T X U); simpl...
-- 
-assert (
-incl
-  (parties (substT U1 X T2) ++
-   parties (substT U2 X T2))
-   ((parties U1 ++ parties T2) ++
-   (parties U2 ++ parties T2)))...
-unfold incl in *; introv IN; eapply in_app_iff in IN as [L | R].
-assert (In a
-      ((parties U1 ++ parties T2) ++
-       parties U2 ++ parties T2)).
-       eapply H...
-eapply in_app_iff; left... 
-eapply in_app_iff in H0; intuition.
-eapply in_app_iff in H1; intuition.
-eapply in_app_iff in H1; intuition.
-assert (In a
-      ((parties U1 ++ parties T2) ++
-       parties U2 ++ parties T2)).
-       eapply H...
-eapply in_app_iff; right... 
-eapply in_app_iff in H0; intuition.
-eapply in_app_iff in H1; intuition.
-eapply in_app_iff in H1; intuition.
-- unfold incl in *; introv IN; inv IN...
-right...
-- unfold incl in *; introv IN; inv IN...
-right...
+    incl_appl, incl_appr, incl_app_app, in_eq.
+  functional induction (substT T X U); simpl...
+  - 
+    assert (
+        incl
+          (parties (substT U1 X T2) ++
+             parties (substT U2 X T2))
+          ((parties U1 ++ parties T2) ++
+             (parties U2 ++ parties T2)))...
+    unfold incl in *; introv IN; eapply in_app_iff in IN as [L | R].
+    assert (In a
+              ((parties U1 ++ parties T2) ++
+                 parties U2 ++ parties T2)).
+    eapply H...
+    eapply in_app_iff; left... 
+    eapply in_app_iff in H0; intuition.
+    eapply in_app_iff in H1; intuition.
+    eapply in_app_iff in H1; intuition.
+    assert (In a
+              ((parties U1 ++ parties T2) ++
+                 parties U2 ++ parties T2)).
+    eapply H...
+    eapply in_app_iff; right... 
+    eapply in_app_iff in H0; intuition.
+    eapply in_app_iff in H1; intuition.
+    eapply in_app_iff in H1; intuition.
+  - unfold incl in *; introv IN; inv IN...
+    right...
+  - unfold incl in *; introv IN; inv IN...
+    right...
 Qed.
 
 
@@ -3569,20 +4804,20 @@ Lemma participants_typ_lts_redex t1 a t2:
   typ_lts t1 a t2 ->
   incl (parties t2) (parties t1).
 Proof with eauto using incl_refl.
-introv LTS.
-dependent induction LTS; simpl...
-eapply incl_tran.
-Unset Printing Notations.
-eapply participants_subst...
-unfold parties; fold parties... 
-eapply incl_app...
-right...
-right...
-eapply incl_appl...
-eapply incl_appr...
-eapply incl_appl...
-eapply incl_appr...
+  introv LTS.
+  dependent induction LTS; simpl...
+  eapply incl_tran.
+  eapply participants_subst...
+  unfold parties; fold parties... 
+  eapply incl_app...
+  right...
+  right...
+  eapply incl_appl...
+  eapply incl_appr...
+  eapply incl_appl...
+  eapply incl_appr...
 Qed.
+
 
 Lemma disjoint_domain_absurd (d1 d2 : part_env) p P:
   disjoint_domain d1 d2 ->
@@ -3590,10 +4825,10 @@ Lemma disjoint_domain_absurd (d1 d2 : part_env) p P:
   d2 p <> None  ->
   P.
 Proof with eauto.
-introv DIS SOME1 SOME2.
-assert (d1 p = None).
-eapply DIS...
-rewrite H in *; contradiction.
+  introv DIS SOME1 SOME2.
+  assert (d1 p = None).
+  eapply DIS...
+  rewrite H in *; contradiction.
 Qed.
 
 
@@ -3615,8 +4850,8 @@ Proof with eauto.
     simpl;
     intuition.
   split;
-  eapply PAR;
-  repeat right...
+    eapply PAR;
+    repeat right...
 Qed.
 
 Lemma update_app d0 l1 l2 d p tp tp':
@@ -3717,6 +4952,7 @@ fold update_partition...
 exists (a <- p #: tp' :: l1) (o::l2)...
 exists (a  :: l') l''; rewrite H...
 Qed.
+
 
 Lemma update_inv_some d0 ld d p tp:
   partition d0 ld ->
@@ -5105,7 +6341,6 @@ eapply PAR;
 try rewrite SOME;
 try discriminate... 
 rewrite EQ1, SOME in EQ3; inversion EQ3; subst t0...
-Search typ_lts top.
 rewrite SOME1 in *; contradiction.
 
 - unfold update_partition in IN; rewrite SOME in IN;
@@ -5420,6 +6655,106 @@ try discriminate...
 Qed.
 
 
+  
+Lemma complete_update_partition d p t t' ld:
+  partition d ld ->
+  complete d ld ->
+  d p = Some t ->
+  complete (d <- p #: t')
+    (update_partition ld p t').
+Proof with eauto using in_eq.
+  introv PART CPL EQ.
+  unfold complete in *;
+    introv EQ1.
+  unfold update in EQ1.
+
+  remember p0 as q.
+  subst p0.
+
+  
+
+  case_eq (pbeq p q);
+    introv PEQ;
+    rewrite PEQ in *...
+  try rewrite participant_beq_eq in *.
+  subst q.
+
+  assert (IH :  d p <> None);
+    try introv ABS;
+    try rewrite ABS in *;
+    try discriminate.
+
+   eapply CPL in IH; unpack...
+  
+   case_eq (d1 p); introv EQ2...
+    eapply in_split in H; unpack; subst.
+  erewrite update_app...
+  exists (d1 <- p #: t'); split...
+  eapply in_app_iff; right...
+  unfold update; rewrite participant_beq_eq_true...
+  rewrite EQ2 in *; try contradiction.
+
+  eapply CPL in EQ1; unpack...
+  eapply in_split in H; unpack; subst.
+  case_eq (d1 p); introv EQ2...
+  erewrite update_app...
+  exists (d1 <- p #: t'); split...
+  eapply in_app_iff; right...
+  unfold update; rewrite PEQ...
+
+  eapply update_app_none with (l1 := l1) (l2 := l2) (tp' := t') in EQ2.
+  unpack. 
+  exists d1.
+  split.
+  assert (IN: In d1 (l' ++ d1 :: l'')).
+  eapply in_app_iff; right...
+  setoid_rewrite H...
+  assumption.
+Qed.
+
+
+
+Lemma update_inv2 d ld p tp:
+  In d (update_partition ld p tp) ->
+  In d ld \/
+    exists d1,
+  In d1 ld /\ d = d1 <- p #: tp.
+Proof with eauto using in_eq.
+  introv IN.
+  gen d.
+  functional induction (update_partition ld p tp); intros...
+  inv IN...
+  left...
+  right...
+  inv IN...
+  eapply IHl in H...
+  destruct H.
+  left; right...
+  unpack;
+    subst.
+  right; exists d1; split...
+  right...
+Qed.
+  
+Lemma admissible_update_partition p t ld:
+  admissible ld ->
+  wf t ->
+  admissible (update_partition ld p t).
+Proof with eauto using in_eq.
+  introv WFE WF.
+  unfold admissible in *;
+    introv IN1.
+  eapply update_inv2 in IN1 as [K1 | K2];
+    unpack; subst...
+  introv IN.
+  unfold update in IN.
+  case_eq (pbeq p p0); introv PEQ;
+    try rewrite PEQ in *;
+    try inv IN...
+  eapply WFE...
+Qed.
+  
+  
 (** Subject reduction *)
 Lemma subject_reduction U M a M' U':
   closedS M ->
@@ -5459,7 +6794,7 @@ Proof
     in_eq,
     update_hit,
     partition_closed_rcomm,
-    partition_closed_rrec.
+    partition_closed_rrec.      
   
   introv CLS WF TS LTS ELTS.
   gen U U'.
@@ -5531,7 +6866,7 @@ Proof
     inverts TS as TC1 TC2 EQ1 EQ2.
     assert (TC1' := TC1).
     assert (TC2' := TC2).
-    inverts TC1' as TC3 TC4 EQ3 EQ4.
+    inverts TC1' as TC3 TC4 EQ3 CPL EQ4.
     inverts TC3 as WF3 TC3.
     inverts TC4 as WF4 TC4.
 
@@ -5563,12 +6898,12 @@ Proof
       (d1 := ((singleton p T1 @@ singleton q T0 @ pf0)))
       (d2 := d2)
       (t1 := T1)
-      in H6...
+      in H7...
     eapply cat_hit_left with
       (d1 := ((singleton p T1 @@ singleton q T0 @ pf0)))
       (d2 := d2)
       (t1 := T0)
-      in H7...
+      in H8...
     subst T0 T1.
 
     eapply typ_input_change_payload with (v' := v) in E1.
@@ -5632,17 +6967,8 @@ Proof
               (single_session (q, Q'))))
           ((singleton p tp') @@
              (singleton q tq') @ pf1')).
-    
-    subst;
-      eapply ts_parallel with
-      (ld := update_partition
-               (update_partition ld0 p tp')
-               q tq')...
-    assert
-      (P1: partition
-             (singleton p tp'
-                @@ singleton q tq @ pf01)
-             (update_partition ld0 p tp')).
+  
+   
     remember (singleton p tp
                 @@ singleton q tq @ pf0 <- p #: tp') as f.
     remember ( (singleton p tp'
@@ -5652,13 +6978,17 @@ Proof
     subst.
     unfold update, cat, singleton, extend;
       destruct ( pbeq p x)...
-    rewrite <-EQ.
-    subst;
-      eapply partition_update_partition...
+     assert
+      (P1: partition
+             (singleton p tp'
+                @@ singleton q tq @ pf01)
+             (update_partition ld0 p tp')).
+    rewrite  <-Heqg, <-EQ, Heqf.
+    eapply partition_update_partition...
 
-    remember (singleton p tp' @@ singleton q tq @ pf01 <- q #: tq') as f.
-    remember (singleton p tp' @@ singleton q tq' @ pf1') as g.
-    assert (EQ: f = g).
+    remember (singleton p tp' @@ singleton q tq @ pf01 <- q #: tq') as f1.
+    remember (singleton p tp' @@ singleton q tq' @ pf1') as g1.
+    assert (EQ0: f1 = g1).
     apply functional_extensionality; intros.
     subst.
     unfold update, cat, singleton, extend...
@@ -5669,44 +6999,57 @@ Proof
     assert (K := pf01).
     specialize K with x.
     destruct K as [ABS _].
-    assert (EQ: forall A, singleton x A x = Some A)... 
+    assert (EQQ: forall A, singleton x A x = Some A)... 
     intros; unfold singleton, extend;
       try rewrite participant_beq_eq_true...
-    rewrite EQ in ABS...
+    rewrite EQQ in ABS...
     assert (ABS2 : singleton x tq x = None).
     eapply ABS; try discriminate...
     unfold singleton, extend in ABS2;
       try rewrite participant_beq_eq_true in ABS2...
     discriminate.
-    rewrite <-EQ.
-    subst;
-      eapply partition_update_partition...
+
+    rewrite Heqg1;
+      eapply ts_parallel with
+      (ld := update_partition
+               (update_partition ld0 p tp')
+               q tq')...
+    rewrite  <-Heqg1, <-EQ0, Heqf1, <-Heqg, <-EQ, Heqf.
+    repeat eapply partition_update_partition...
     
+    rewrite  <-Heqg1, <-EQ0, Heqf1, <-Heqg, <-EQ, Heqf.
+    unpack;
+      split;
+      repeat eapply complete_update_partition...
+    repeat eapply partition_update_partition...
+    eapply admissible_update_partition...
+    eapply admissible_update_partition...
+
     introv IN.
     assert (E' := E1).
     
     eapply partition_rcomm in IN...
-    destruct IN...
-    unpack.
-    
+    destruct IN as [IN | EX];
+      try eapply EQ4 with (D := []) (k := 0) in IN as V;
+      unpack...
     split.
-    subst...
+    subst.
     eapply partition_closed_rcomm;
-    try eapply EQ4...
+      try eapply EQ4...
 
+    subst.
+    introv IN2.
+    assert (CMP: dcompliance d1 0 ((d1, 0) :: D)).
+    eapply EQ4...
 
-    subst d;
-      eapply elts_compliance
-      with (d1 := d1)...
-    eapply EQ4;
-      try eapply in_app_iff;
-      try right;
-      try left...
+    eapply elts_dcompliance with
+      (d2 :=  (d1 <- p #: tp') <- q #: tq') (a := (atau (Some (exc p l q))))in CMP...
     econstructor...
-    eapply EQ4;
-      try eapply in_app_iff;
-      repeat right...
     
+    
+    intros.
+    eapply EQ4 with (D := []) (k := 0) in H as V; unpack...
+   
 
     move EQ1 at bottom.
 
@@ -5775,9 +7118,9 @@ Proof
       with (d2 := d2) (pf := pf'0) (tp' := tq')
       in pf''...
     unpack.
-    rewrite <-H in H0.
+    rewrite <-H3 in H5.
     
-    assert (EQ := H0).
+    assert (EQ := H5).
     subst d1.
           
     assert
@@ -5848,45 +7191,62 @@ Proof
            (update_partition
               (update_partition ld0 p tp') q tq'))...
 
-       rewrite <-EQENV...
-      
+      rewrite <-EQENV...
+      rewrite <-EQENV...
+      split.
+      repeat eapply complete_update_partition...
+      eapply admissible_update_partition...
+       eapply admissible_update_partition...
 
       introv IN.
       move EQ4 at bottom.
-      assert (Z := EQ4).
-      specialize Z
-        with d.
-
-     eapply partition_rcomm in IN...
-     destruct IN...
-      unpack.
-      split...
+      eapply partition_rcomm in IN...
+     destruct IN as [IN | EX];
+       try eapply EQ4 in IN;
+       unpack...
+     split...
       subst...
       eapply partition_closed_rcomm...
       eapply EQ4...
+
+    subst...
+    assert (CMP: dcompliance d1 0 ((d1, 0) :: D))...
+    eapply EQ4...
+    eapply elts_dcompliance
+      with (a := atau(Some (exc p l q))) in CMP...
+    econstructor...
         
-      subst.
-      eapply elts_compliance with (d1 := d1)...
-      eapply EQ4...
-      eapply SeCom...
-      eapply EQ4... 
-      
+    introv IN2.
+    
+    eapply EQ4...
+
+    + rewrite <-EQ.
+      split.
+      repeat eapply complete_update_partition...
+      eapply admissible_update_partition...
+      eapply admissible_update_partition...
+
     + introv IN.
-      move EQ2 at bottom.
+      assert (EQ2 := H6).
       assert (Z := EQ2).
       specialize Z
-        with d.
+        with (d := d) (D := D) (k := k).
 
       eapply partition_rcomm in IN...
-      destruct IN...
+      destruct IN as [IN | EX].
+      try eapply Z in IN; unpack; split...
       unpack.
       subst; split.
       eapply partition_closed_rcomm...
       eapply EQ2...
 
-      eapply elts_compliance with (d1 := d1)...
-       eapply EQ2...
-      eapply SeCom...
+     assert (CMP: dcompliance d1 0 ((d1, 0) :: D))...
+    eapply EQ2... 
+    eapply elts_dcompliance
+      with (a := atau (Some (exc p l q))) in CMP...
+    econstructor...
+
+      introv IN2.
       eapply EQ2...
 
   - Case r_rec.
@@ -5958,35 +7318,64 @@ Proof
 
     rewrite <-EQ.
     eapply partition_update_partition...
-
+    rewrite <-EQ.
+    split.
+    unpack.
+    eapply complete_update_partition...
+    unpack.
+    eapply admissible_update_partition...
+    
     introv IN.
+    assert (CPL2 := COMP).
+    clear COMP.
+    assert (COMP := H9).
     assert (LTS := H2).
     assert (K := IN).
     eapply partition_rrec in K as [A | B]...
     unpack.
-    eapply in_split in H0 as (l1 &l2 &EQ2)...
+    eapply in_split in H5 as (l1 &l2 &EQ2)...
     subst ld.
     erewrite update_app in IN...
     eapply in_app_iff in IN as [A | [EQ3 | C]]...
-    eapply COMP;
-      eapply in_app_iff;
-      try left...
+    assert (IH2:  In d (l1 ++ d1 :: l2)).
+    eapply in_app_iff; repeat left...
+     eapply COMP in IH2;
+       unpack; split...
+     
     assert (elts d1 (aunfold p) d).
     subst;
       try econstructor...
+    
     split.
     subst...
     eapply partition_closed_rrec...  
-    eapply COMP;
-      eapply in_app_iff;
+    eapply COMP...
+    eapply in_app_iff;
       try right...
-    eapply elts_compliance...
-    eapply COMP;
-      eapply in_app_iff;
+    subst.
+      assert (CMP: dcompliance d1 0 ((d1, 0) :: D))...
+    eapply COMP... 
+    eapply in_app_iff;
       try right...
-     eapply COMP;
-      eapply in_app_iff;
-      repeat right...
+    eapply elts_dcompliance in CMP...
+    eapply H1...
+    eapply in_app_iff; right...
+
+    split.
+    subst...
+    eapply partition_closed_rrec...  
+    eapply COMP...
+    eapply in_app_iff;
+      try right...
+    subst.
+      assert (CMP: dcompliance d1 0 ((d1, 0) :: D))...
+    eapply COMP... 
+    eapply in_app_iff;
+      try right...
+    eapply elts_dcompliance in CMP...
+    eapply H1...
+    eapply in_app_iff; right...
+    econstructor...
 
      move TS1 at bottom.
      inv TS1...
@@ -6095,9 +7484,9 @@ Proof with eauto using proc_equiv_single_inv.
 Qed.
 
 
-Lemma lts_typ_lts_unfold M0 p G H M U:
+Lemma lts_typ_elts_unfold M0 p G H M U:
   lts M0 (aunfold p) M ->
-  types_session G H M0 U ->
+  types_session G H M0 U  ->
   exists U',
     elts U (aunfold p) U'.
 Proof with
@@ -6116,7 +7505,7 @@ Proof with
     assert False...
     contradiction.
   - inv H3...
-    inv H9.
+    inv H10.
     exists ((singleton p (typ_mu  t0 T) @@ d2 @ pf) <- p #: (t0 £ T))...
     econstructor...
   - assert (M1 = single_session (p0, P))...
@@ -6145,7 +7534,7 @@ Proof with eauto using proc_equiv_single_inv.
 Qed.
 
 
-Lemma lts_typ_lts_exc M0 exc G H M U:
+Lemma lts_typ_elts_exc M0 exc G H M U :
   lts M0 (atau (Some exc)) M ->
   types_session G H M0 U ->
   exists U',
@@ -6168,11 +7557,11 @@ Proof with
     contradiction.
   - clear IHLTS1 IHLTS2.
     inv H2...
-    inv H5.
-    eapply lts_input_typ in H11;
+    inv H6.
+    eapply lts_input_typ in H13;
       unpack...
-    inv H7.
-    eapply lts_output_typ in H12;
+    inv H8.
+    eapply lts_output_typ in H11;
       unpack...
     remember ((singleton p T1 @@ singleton q T0 @ pf0) @@ d2 @ pf) as d.
     exists ((d <- p #: U) <- q #: U0)...
@@ -6189,7 +7578,7 @@ Proof with
     eapply types_struct in TC...
 Qed.
 
-Lemma lts_typ_if_then_else M M' U:
+Lemma lts_typ_if_then_else M M' U :
   lts M (atau None) M' ->
   types_session empty_env empty_penv M U ->
   types_session empty_env empty_penv M' U.
@@ -6209,9 +7598,9 @@ Proof with
     assert False...
     contradiction.
   - inv H2.    
-    inv H8...
+    inv H9...
   - inv H2.
-    inv H8...
+    inv H9...
 Qed.    
     
 Definition elts_action a :=
@@ -6224,16 +7613,16 @@ Theorem subject_reduction_standard U M a M':
   types_session empty_env empty_penv M U ->
   lts M a M' ->
   elts_action a ->
-  types_session  empty_env empty_penv M' U \/
-  exists U', 
-    elts U a U' /\
-      types_session  empty_env empty_penv M' U'.
+  types_session  empty_env empty_penv M' U  \/
+    exists U', 
+      elts U a U' /\
+        types_session  empty_env empty_penv M' U'.
 Proof with
   eauto
   using
   subject_reduction,
-    lts_typ_lts_unfold,
-    lts_typ_lts_exc,
+    lts_typ_elts_unfold,
+    lts_typ_elts_exc,
     lts_typ_if_then_else.
   introv CLS WF TC LTS EA.
   destruct EA as [(p &EQ) | (p &EQ)];
@@ -6249,5 +7638,5 @@ Proof with
                  elts U (atau (Some e)) U')...
       unpack;
         try eexists...
-    + left...
+    + left...  
 Qed.

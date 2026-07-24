@@ -39,10 +39,8 @@ CONTEXT SUMMARY
 * Axioms:
     Coq.Logic.ProofIrrelevance.proof_irrelevance
     Coq.Logic.FunctionalExtensionality.functional_extensionality_dep
-    ISOMPST.iso_mpst.elts_compliance
     Coq.Logic.Classical_Prop.classic
     Coq.Logic.Eqdep.Eq_rect_eq.eq_rect_eq
-    ISOMPST.iso_mpst.compliance
   
 * Constants/Inductives relying on type-in-type: <none>
   
@@ -53,7 +51,7 @@ CONTEXT SUMMARY
 
 
 ## Structure of folder `theories`
-* [iso_mpst.v](theories/iso_mpst.v) contains the [Subject Reduction Theorem](theories/iso_mpst.v#L6221-L6253)
+* [iso_mpst.v](theories/iso_mpst.v) contains the [Subject Reduction Theorem](theories/iso_mpst.v#L7610-L7642)
 * [operations.v](theories/operations.v)  contains operations on Lists
 * [header.v](theories/header.v) contains case tactics
 * [CpdtTactics.v](theories/CpdtTactics.v) contains tactics written by Adam Chlipala

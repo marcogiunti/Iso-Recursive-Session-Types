@@ -176,7 +176,7 @@ Function  top t :=
       []
   end.
 
-Fixpoint tbranch_r t :=
+Function tbranch_r t :=
   match t with
   | typ_input _ _ _ _ =>
       True
@@ -1255,7 +1255,7 @@ Inductive lts : session -> proc_action -> session -> Prop :=
        (p, proc_output q l  e s P))
     (aoutput q l v)
     (single_session (p, P))
-| r_sum p P a P' Q:
+| r_sum_l p P a P' Q:
   lts
     (single_session (p, P))
     a
@@ -1321,7 +1321,16 @@ Inductive lts : session -> proc_action -> session -> Prop :=
   proc_equiv M1' M1 ->
   lts M1 a M2 ->
   proc_equiv M2 M2' ->
-  lts M1' a M2'.
+  lts M1' a M2'
+| r_sum_r p P a Q Q':
+  lts
+    (single_session (p, Q))
+    a
+    (single_session (p, Q')) ->
+  lts
+    (single_session (p, proc_sum P Q))
+    a
+    (single_session (p, Q')).
 
 Hint Constructors lts.
 
@@ -1840,6 +1849,7 @@ Proof with eauto.
   inv TC.
   inv TC.
   inv H0...
+  inv TC...
 Qed.
 
 Lemma lts_typ_mu_input_false G H P X T p p2 l2 v M:
@@ -1855,6 +1865,7 @@ Proof with eauto.
   inv TC.
   inv TC.
   inv H0...
+  inv TC...
 Qed.
 
 
@@ -1872,6 +1883,8 @@ Proof with eauto.
   inverts TC as TC1 TC2.
   eapply IHLTS in TC1 as (U &E1)...
   inv H...
+  inverts TC as TC1 TC2.
+  eapply IHLTS in TC2 as (U &E1)...
 Qed.
 
 Lemma lts_output_typ p P q l v M G H T:
@@ -1890,6 +1903,8 @@ Proof with eauto.
   eapply IHLTS in TC1 as (U &E1)...
   eapply IHLTS in TC as (U &E1)...
   inv H...
+  inverts TC as TC1 TC2.
+  eapply IHLTS in TC2 as (U &E1)...
 Qed.
 
 Definition  action_dual a b p q :=
@@ -2476,6 +2491,7 @@ Definition deadlock d :=
 
 Definition nmismatch d :=
   forall p q pol_p pol_q tp tq,
+    p <> q ->
     d p = Some tp ->
     d q = Some tq ->
     coParticipant tp = Some (q, pol_p) ->
@@ -3745,6 +3761,14 @@ Proof with eauto.
   dependent induction PE...
 Qed.
 
+Lemma proc_equiv_single_inv2 M1 M2:
+  proc_equiv M2 (single_session M1)  ->
+  M2 = (single_session M1).
+Proof with eauto.
+  introv PE.
+  dependent induction PE...
+Qed.
+
 Lemma lts_proc_input p q r l1 l2 x s v Q M:
   lts
     (single_session (p, proc_input q l1 x s Q))
@@ -4511,7 +4535,7 @@ Proof
     eapply IHTS...
     eapply wf_sum in WF as (WF1 &WF2)...
 
-  - Case r_sum.
+  - Case r_sum_l.
 
     try destruct WF as [NDP NDM].
     move LTS at bottom.
@@ -4588,6 +4612,54 @@ Proof
     inv H0.
     eapply IHLTS...
     inv H...
+
+    
+  - Case r_sum_r.
+
+    remember P' as Q'.
+    subst P'.
+    remember P0 as P.
+    subst P0.
+
+    try destruct WF as [NDP NDM].
+    move LTS at bottom.
+    inverts TS as TC1 TC2.
+
+    assert (closedS (single_session (p, Q))).
+    inverts CLS as F1 F2; econstructor...
+    eapply fv_sum in F1; intuition.
+    eapply fvP_sum in F2; intuition.
+
+    
+    * inverts ELTS as E1...
+      inverts E1 as SUMRED...
+
+      ** inv TC1.
+         assert False.
+         eapply tbranch_absurd with (l := l1)...
+         simpl...
+         eapply lts_input_typ in LTS...
+         unpack;
+           subst.
+         eapply lts_input...
+         contradiction.
+
+      **inv TC1.
+
+      ** inv TC1.
+        
+      ** eapply IHLTS in E1...        
+         eapply wf_sum in WF.
+         intuition.
+      ** inv TC1.
+         inv E1.
+      ** inv TC1.
+         eapply tbranch_output_false in E1...
+         contradiction.
+         unfold wf, ndl in WF; intuition.
+         eapply tbranch_sum_r...
+         unfold tselect, tselect_r in H0.
+         intuition.
 Qed.
 
 Lemma elts_inversion D a D':
@@ -6831,7 +6903,7 @@ Proof
     
   
     
-  - Case r_sum.
+  - Case r_sum_l.
 
     try destruct WF as [NDP NDM].
     move LTS at bottom.
@@ -7426,15 +7498,94 @@ Proof
     inv H0.
     eapply IHLTS...
     inv H...
+
+ - Case r_sum_r.
+
+    try destruct WF as [NDP NDM].
+    move LTS at bottom.
+    inverts TS as WF TC.
+    inverts TC as TC1 TC2.
+
+    assert (closedS (single_session (p, Q))).
+    inverts CLS as F1 F2; econstructor...
+    eapply fv_sum in F1; intuition.
+    eapply fvP_sum in F2; intuition.
+
+    
+    inv LTS.
+
+    all:
+      eapply elts_singleton_inv in ELTS;
+      unpack;
+      subst;
+      try discriminate...    
+Qed.
+
+
+Lemma tbranch_ainput t a t':
+  tbranch t ->
+  typ_lts t a t' ->
+  exists p l v,
+    a = ainput p l v.
+Proof with eauto using tbranch_output_false.
+  introv TB LTS.
+  dependent induction LTS...
+  - unfold tbranch, tbranch_r in *;
+      unpack;
+      try contradiction...
+  - unfold tbranch, tbranch_r in *;
+      unpack;
+      try contradiction...
+  - assert False...
+    contradiction.
+  - assert False...
+    contradiction.
+Qed.    
+
+Lemma wf_sum_input_r p l s t1 t2 a t'':
+  wf (typ_sum (typ_input p l s t1) t2) ->
+  typ_lts t2 a t'' ->
+  exists v l1,
+    a = ainput p l1 v.
+Proof with eauto using tbranch_ainput, in_eq.
+  introv WF LTS.
+  assert (TB: tbranch t2).
+  eapply tbranch_sum...
+  unfold wf, ndl in WF;
+    fold ndl in *;
+    intuition...
+  unfold tselect, tselect_r in *;
+    intuition.
+  assert (LTS2 := LTS).
+  eapply tbranch_ainput in LTS;
+    unpack;
+    subst...
+  assert (p0 = p).
+  unfold wf, ndl in *;
+    fold ndl in *;
+    intuition.
+  unfold tbranch in H;
+    unpack.
+  eapply H0...
+  eapply typ_lts_input_top in LTS2...
+  unpack.
+  simpl;
+    rewrite H4;
+    try right...
+  unfold tselect, tselect_r in *;
+    unpack;
+    try contradiction.
+  subst...
 Qed.
 
 Lemma lts_typ_lts p P a G H M T:
+  wf T ->
   lts (single_session (p, P)) a M ->
   types G H P T ->
   exists U,
     typ_lts T a U.
-Proof with eauto using lts_input_typ, lts_output_typ.
-  introv LTS TC.
+Proof with eauto using lts_input_typ, lts_output_typ, wf_sum,  wf_sum_input_r.
+  introv WF LTS TC.
   gen G H T.
   dependent induction LTS;
     intros.
@@ -7443,7 +7594,9 @@ Proof with eauto using lts_input_typ, lts_output_typ.
     eexists...
     all:
       eapply IHTC in H;
-      try unpack; eexists...
+      try eapply wf_sum in WF;
+      unpack;
+      try eexists...
   - inv TC.
     eapply IHLTS in H2;
       unpack...
@@ -7455,8 +7608,20 @@ Proof with eauto using lts_input_typ, lts_output_typ.
     inv H;
       inv H0...
     unpack; subst...
+    eapply wf_sum in WF;
+      unpack...
   -  inv H;
        inv H0...
+  - inv TC.
+    assert (WF2 := WF).
+    eapply IHLTS in H4;
+      try eapply wf_sum in WF;
+      unpack...
+    exists U...
+    inv H2.
+    eapply  wf_sum_input_r in WF2;
+      unpack...
+    subst...
 Qed.
 
 Lemma lts_aunfold_eq p0 p P P':
@@ -7517,6 +7682,21 @@ Proof with
           (parallel_session s1 s2)
           (d1 @@ d2 @ pf))...
     eapply types_struct in TC...
+  - inv H4.
+    inv H3.
+    assert (IH:
+             exists U' : part_env, elts (singleton p0 t2) (aunfold p) U')...
+    eapply IHLTS...
+    econstructor...
+    eapply wf_sum in H2;
+      unpack...
+    unpack...
+    inv H0...
+    inv H3.
+    eapply singleton_inv in H5; unpack; subst.
+    unfold wf, ndl in H2; intuition.
+    unfold tbranch, tbranch_r in H0; intuition.
+     unfold tselect, tselect_r in H0; intuition.
 Qed.
 
 Lemma lts_input_exc_absurd p exc q l x s P Q :
@@ -7576,6 +7756,25 @@ Proof with
           (parallel_session s1 s2)
           (d1 @@ d2 @ pf))...
     eapply types_struct in TC...
+  - inv H4.
+    inv H3.
+    assert (IH:
+             exists U' : part_env, elts (singleton p t2) (atau (Some exc)) U')...
+    eapply IHLTS...
+    econstructor...
+    eapply wf_sum in H2;
+      unpack...
+    unpack...
+    inv H0...
+    eapply singleton_inv in H5; unpack; subst.
+    eapply singleton_inv in H8; unpack; subst.
+    unfold wf, ndl in H2; intuition.
+    assert False.
+    eapply tbranch_output_false...
+    contradiction.
+    assert False.
+    eapply tselect_input_false...
+    contradiction.
 Qed.
 
 Lemma lts_typ_if_then_else M M' U :
@@ -7601,7 +7800,15 @@ Proof with
     inv H9...
   - inv H2.
     inv H9...
-Qed.    
+  - clear IHLTS H3.
+    assert False.
+    dependent induction LTS...
+    eapply proc_equiv_single_inv in H;
+      eapply proc_equiv_single_inv2 in H0;
+      subst...
+    contradiction.
+Qed.
+
     
 Definition elts_action a :=
   (exists p, a = aunfold p) \/
@@ -7623,7 +7830,7 @@ Proof with
   subject_reduction,
     lts_typ_elts_unfold,
     lts_typ_elts_exc,
-    lts_typ_if_then_else.
+  lts_typ_if_then_else.
   introv CLS WF TC LTS EA.
   destruct EA as [(p &EQ) | (p &EQ)];
     subst a.

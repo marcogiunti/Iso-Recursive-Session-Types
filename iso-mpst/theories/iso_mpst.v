@@ -803,12 +803,14 @@ Inductive expr : Set :=
 Inductive eval_expr : expr -> value -> Prop :=
 | eval_val v:
   eval_expr (expr_val v) v
-| eval_succ n:
+| eval_succ e n:
+  eval_expr e (value_nat n) ->
   eval_expr
-    (expr_succ (expr_val (value_nat n))) (value_nat (S n))
-| eval_neg b:
+    (expr_succ e) (value_nat (S n))
+| eval_neg e b:
+  eval_expr e (value_bool b) ->
   eval_expr
-    (expr_neg (expr_val (value_bool b))) (value_bool (negb b)).
+    (expr_neg e) (value_bool (negb b)).
 
 Inductive process_var : Set :=
 | pvar : nat -> process_var.
@@ -978,9 +980,54 @@ Inductive proc_equiv : session -> session -> Prop :=
 | pe_commut s1 s2:
   proc_equiv
     (parallel_session s1 s2)
-    (parallel_session s2 s1).
+    (parallel_session s2 s1)
+| pe_assoc_l s1 s2 s3:
+  proc_equiv
+    (parallel_session (parallel_session s1 s2) s3)
+    (parallel_session s1 (parallel_session s2 s3))
+| pe_assoc_r s1 s2 s3:
+  proc_equiv
+    (parallel_session s1 (parallel_session s2 s3))
+    (parallel_session (parallel_session s1 s2) s3)
+| pe_par_l M1 M2 N:
+  proc_equiv M1 M2 ->
+  proc_equiv
+    (parallel_session M1 N)
+    (parallel_session M2 N).
 
 Hint Constructors proc_equiv.
+
+(** Structural congruence relates single threads only to themselves *)
+Lemma proc_equiv_single M1 M2:
+  proc_equiv M1 M2 ->
+  (forall x, M1 = single_session x -> M2 = single_session x) /\
+    (forall x, M2 = single_session x -> M1 = single_session x).
+Proof.
+  intros PE.
+  induction PE;
+    split;
+    intros x E;
+    try discriminate;
+    try tauto.
+Qed.
+
+Ltac pe_single :=
+  repeat match goal with
+  | H: proc_equiv (single_session ?x) ?M |- _ =>
+      let K := fresh "K" in
+      destruct (proc_equiv_single _ _ H) as [K _];
+      specialize (K x eq_refl);
+      try subst M;
+      try discriminate K;
+      clear H
+  | H: proc_equiv ?M (single_session ?x) |- _ =>
+      let K := fresh "K" in
+      destruct (proc_equiv_single _ _ H) as [_ K];
+      specialize (K x eq_refl);
+      try subst M;
+      try discriminate K;
+      clear H
+  end.
 
 Inductive exchange : Set :=
 | exc : participant -> label -> participant -> exchange.
@@ -1641,11 +1688,13 @@ Inductive typ_lts : typ -> proc_action -> typ -> Prop :=
     (aunfold p)
     (X £ T)
 | e_input p l v s t :
+  stypes empty_env (expr_val v) s ->
   typ_lts
     (typ_input p l s t)
     (ainput p l v)
     t
 | e_output p l v s t :
+  stypes empty_env (expr_val v) s ->
   typ_lts
     (typ_output p l s t)
     (aoutput p l v)
@@ -1847,7 +1896,7 @@ Lemma lts_input_output_false p p1 l1 x p2 l2 v s1 P M:
 Proof with eauto.
   introv LTS.
   dependent induction LTS...
-  inv H...
+  pe_single...
 Qed.
 
 Lemma lts_typ_mu_output_false G H P X T p p2 l2 v M:
@@ -1884,12 +1933,26 @@ Qed.
 
 
 
+(** Evaluation preserves sorts *)
+Lemma eval_stypes G e v s:
+  eval_expr e v ->
+  stypes G e s ->
+  stypes empty_env (expr_val v) s.
+Proof.
+  introv EV.
+  gen s.
+  induction EV;
+    introv ST;
+    inv ST;
+    constructor.
+Qed.
+
 Lemma lts_input_typ p P q l v M G H T:
   lts (single_session (p, P)) (ainput q l v) M ->
   types G H P T ->
   exists U,
     typ_lts T (ainput q l v) U.
-Proof with eauto.    
+Proof with eauto using eval_stypes.    
   introv LTS TC.
   gen G H T.
   dependent induction LTS; intros...
@@ -1908,7 +1971,7 @@ Lemma lts_output_typ p P q l v M G H T:
   types G H P T ->
   exists U,
     typ_lts T (aoutput q l v) U.
-Proof with eauto.    
+Proof with eauto using eval_stypes.    
   introv LTS TC.
   gen G H T.
   dependent induction LTS; intros...
@@ -2484,6 +2547,53 @@ Proof with eauto.
   rewrite swap_cat...
 Qed.
 
+Ltac dd_solve :=
+  simpl in *;
+  repeat match goal with
+         | H: Some _ <> None -> _ |- _ =>
+             specialize (H ltac:(discriminate))
+         end;
+  try congruence.
+
+Lemma cat_assoc_l (d1 d2 d3 : part_env) pf12 pf:
+  exists pf23 pf',
+    (d1 @@ d2 @ pf12) @@ d3 @ pf = d1 @@ (d2 @@ d3 @ pf23) @ pf'.
+Proof.
+  assert (pf23 : disjoint_domain d2 d3).
+  { intro x; destruct (pf12 x) as [A1 B1]; destruct (pf x) as [A B];
+      unfold cat in *; split; intro N;
+      destruct (d1 x) eqn:E1; destruct (d2 x) eqn:E2; destruct (d3 x) eqn:E3;
+      dd_solve. }
+  assert (pf' : disjoint_domain d1 (d2 @@ d3 @ pf23)).
+  { intro x; destruct (pf12 x) as [A1 B1]; destruct (pf x) as [A B];
+      unfold cat in *; split; intro N;
+      destruct (d1 x) eqn:E1; destruct (d2 x) eqn:E2; destruct (d3 x) eqn:E3;
+      dd_solve. }
+  exists pf23, pf'.
+  apply functional_extensionality; intro x; unfold cat.
+  destruct (d1 x); reflexivity.
+Qed.
+
+Lemma cat_assoc_r (d1 d2 d3 : part_env) pf23 pf:
+  exists pf12 pf',
+    d1 @@ (d2 @@ d3 @ pf23) @ pf = (d1 @@ d2 @ pf12) @@ d3 @ pf'.
+Proof.
+  assert (pf12 : disjoint_domain d1 d2).
+  { intro x; destruct (pf23 x) as [A1 B1]; destruct (pf x) as [A B];
+      unfold cat in *; split; intro N;
+      destruct (d1 x) eqn:E1; destruct (d2 x) eqn:E2; destruct (d3 x) eqn:E3;
+      dd_solve. }
+  assert (pf' : disjoint_domain (d1 @@ d2 @ pf12) d3).
+  { intro x; destruct (pf23 x) as [A1 B1]; destruct (pf x) as [A B];
+      unfold cat in *; split; intro N;
+      destruct (d1 x) eqn:E1; destruct (d2 x) eqn:E2; destruct (d3 x) eqn:E3;
+      dd_solve. }
+  exists pf12, pf'.
+  apply functional_extensionality; intro x; unfold cat.
+  destruct (d1 x); reflexivity.
+Qed.
+
+
 (* REVISION -- JULY 2026 *)
 (* Added Lemma elts_dcompliance L3531 *)
 
@@ -2531,9 +2641,9 @@ Definition nmismatch d :=
     coParticipant tq = Some (p, pol_q) ->
     pol_p <> pol_q /\
       (pol_p = input ->
-       disjoint (tbranch_labels tp) (tselect_labels tq) /\
-         (pol_p = output ->
-          disjoint (tselect_labels tp) (tbranch_labels tq))).
+       ~ disjoint (tbranch_labels tp) (tselect_labels tq)) /\
+      (pol_p = output ->
+       ~ disjoint (tselect_labels tp) (tbranch_labels tq)).
 
 Definition ndeadlock d :=
   (exists a d1, elts d a d1) \/
@@ -2576,12 +2686,14 @@ Inductive sd_typ_lts : typ -> proc_action -> typ -> option typ -> Prop :=
     (X £ T)
     None
 | sde_input p l v s t :
+  stypes empty_env (expr_val v) s ->
   sd_typ_lts
     (typ_input p l s t)
     (ainput p l v)
     t
     None
 | sde_output p l v s t :
+  stypes empty_env (expr_val v) s ->
   sd_typ_lts
     (typ_output p l s t)
     (aoutput p l v)
@@ -2634,9 +2746,18 @@ Inductive sd_elts : decr -> part_env -> key -> proc_action -> decr -> part_env -
   d1 q = Some tq ->
   sd_typ_lts tp (ainput q l v) tp' opt1->
   sd_typ_lts tq (aoutput p l v) tq' opt2 ->
-  (opt1 <> None /\ opt2 <> None ->
-   exists t1 t2, opt1 = Some t1 /\ opt2 = Some t2 /\ opt_d2 =  Some ((d1 <- p #: t1) <- q #: t2)) ->
-  (opt1 = None \/ opt2 = None -> opt_d2 =  None) ->
+  (* both remnants: the receiver p and the selector q continue with them *)
+  (forall t1 t2,
+      opt1 = Some t1 ->
+      opt2 = Some t2 ->
+      opt_d2 = Some ((d1 <- p #: t1) <- q #: t2)) ->
+  (* the selector q can still select other labels, which the receiver p
+     does not offer: p is set to end, and the closure reaches a deadlock *)
+  (forall t2,
+      opt1 = None ->
+      opt2 = Some t2 ->
+      opt_d2 = Some ((d1 <- p #: typ_end) <- q #: t2)) ->
+  (opt2 = None -> opt_d2 =  None) ->
   sd_elts D d1 k  (atau (Some (exc p l q))) (removeD k D) ((d1 <- p #: tp') <- q #: tq') opt_d2.
 
 Hint Constructors sd_elts.
@@ -2655,11 +2776,15 @@ Definition oracle := NatMap.t part_env -> key -> option proc_action -> domain ->
 
 Definition label_choice := option label -> list label -> list label -> option label.
 
+(* Ended participants are ignored: minimality is checked on the
+   environment without the participants of type end *)
 Function parties_of (d : part_env) l :=
   match l with
   | [] => Some []
   | p :: tl =>
       match d p, parties_of d tl with
+      | Some typ_end, Some pts =>
+          Some pts
       | Some t, Some pts =>
           Some (p :: parties t ++ pts)
       | _, _ =>
@@ -2671,7 +2796,7 @@ Definition notMinimal (d : part_env) :=
   exists l1 l2 p1 p2 pts1 pts2,
     disjoint l1 l2 /\
       parties_of d l1 = Some (p1 :: pts1) /\
-      parties_of d l1 = Some (p2 :: pts2) /\
+      parties_of d l2 = Some (p2 :: pts2) /\
       disjoint (p1 :: pts1) (p2 :: pts2).
 
 (* Mechanisation of Figure 9 *)
@@ -3446,21 +3571,22 @@ Lemma ex_sd_com tp tp' q l v tq tq' p d1 opt0 opt1 D k:
       (removeD k D) ((d1 <- p #: tp') <- q #: tq') opt.   
 Proof with eauto.
   introv LTS1 LTS2 EQ1 EQ2 IN.
-  case_eq opt0; introv A...
-  case_eq opt1; introv B...
-  exists (Some ((d1 <- p #: t0) <- q #: t1))...
-  econstructor...
-  introv [ABS | ABS]...
-  rewrite A in *; discriminate.
-  rewrite B in *; discriminate.
-  exists (None : option part_env)...
-  econstructor...
-  introv [ABS1  ABS2]...
-  rewrite B in *; contradiction.
-  exists (None : option part_env)...
-  econstructor...
-  introv [ABS1  ABS2]...
-  rewrite A in *; contradiction.
+  destruct opt1 as [t2 |].
+  - destruct opt0 as [t1 |].
+    + exists (Some ((d1 <- p #: t1) <- q #: t2)).
+      econstructor...
+      * introv E1 E2; inv E1; inv E2...
+      * introv E1; discriminate.
+      * introv E2; discriminate.
+    + exists (Some ((d1 <- p #: typ_end) <- q #: t2)).
+      econstructor...
+      * introv E1; discriminate.
+      * introv _ E2; inv E2...
+      * introv E2; discriminate.
+  - exists (None : option part_env).
+    econstructor...
+    + introv _ E2; discriminate.
+    + introv _ E2; discriminate.
 Qed.
 
 Lemma hinted_unfold W k1 d1 tbl p X T l:
@@ -3695,6 +3821,26 @@ Definition admissible (ld : list part_env) :=
     In d ld ->
     wfE d.
 
+(** Typing of the threads of a session, without session-level conditions *)
+Inductive types_threads (g : typ_env) (h : proc_env)
+  : session -> part_env -> Prop :=
+| tt_single p P T1:
+  wf T1 ->
+  types g h P T1 ->
+  types_threads g h
+    (single_session (p, P))
+    (singleton p T1)
+| tt_parallel s1 d1 s2 d2 pf:
+  types_threads g h s1 d1  ->
+  types_threads g h s2 d2 ->
+  types_threads g h
+    (parallel_session s1 s2)
+    (d1 @@ d2 @pf).
+
+Hint Constructors types_threads.
+
+(** Rule T-Ses is n-ary: partition and compliance are checked once,
+    on the environment of the whole session *)
 Inductive types_session (g : typ_env) (h : proc_env)
   : session -> part_env -> Prop :=
 | ts_single p P T1:
@@ -3704,8 +3850,8 @@ Inductive types_session (g : typ_env) (h : proc_env)
     (single_session (p, P))
     (singleton p T1)
 | ts_parallel s1 d1 s2 d2 ld pf:
-  types_session g h s1 d1  ->
-  types_session g h s2 d2 ->
+  types_threads g h s1 d1  ->
+  types_threads g h s2 d2 ->
   partition (d1 @@ d2 @pf) ld ->
   (complete (d1 @@ d2 @pf) ld  /\ admissible  ld) -> 
   (forall d D k,
@@ -3744,19 +3890,80 @@ Proof with eauto.
     unpack...
 Qed.
 
+Definition session_ok (d : part_env) (ld : list part_env) :=
+  partition d ld /\
+    (complete d ld /\ admissible ld) /\
+    (forall d' D k,
+        In d' ld ->
+        partition_closed d' /\
+          (In (d', k) D ->
+           dcompliance d' k D)).
+
+Lemma ts_parallel_inv G H s1 s2 U:
+  types_session G H (parallel_session s1 s2) U ->
+  types_threads G H (parallel_session s1 s2) U /\
+    exists ld, session_ok U ld.
+Proof with eauto.
+  introv TS.
+  inv TS.
+  split...
+  exists ld; split...
+Qed.
+
+Lemma ts_parallel_intro G H s1 s2 U ld:
+  types_threads G H (parallel_session s1 s2) U ->
+  session_ok U ld ->
+  types_session G H (parallel_session s1 s2) U.
+Proof with eauto.
+  introv TT (PA & CA & CMP).
+  inv TT.
+  econstructor...
+Qed.
+
+Lemma types_threads_struct G H M1 M2 U:
+  types_threads G H M1 U ->
+  proc_equiv M1 M2 ->
+  types_threads G H M2 U.
+Proof with eauto.
+  introv TT PE.
+  gen U.
+  induction PE;
+    intros...
+  - inv TT.
+    rewrite swap_cat...
+  - inv TT.
+    match goal with
+    | K: types_threads _ _ (parallel_session _ _) _ |- _ => inv K
+    end.
+    match goal with
+    | |- types_threads _ _ _ ((?a @@ ?b @ ?p) @@ ?c @ ?q) =>
+        destruct (cat_assoc_l a b c p q) as (pf23 & pf' & ->)
+    end...
+  - inv TT.
+    match goal with
+    | K: types_threads _ _ (parallel_session _ _) _ |- _ => inv K
+    end.
+    match goal with
+    | |- types_threads _ _ _ (?a @@ (?b @@ ?c @ ?p) @ ?q) =>
+        destruct (cat_assoc_r a b c p q) as (pf12 & pf' & ->)
+    end...
+  - inv TT...
+Qed.
+
 Lemma types_struct G H M1 M2 U:
   types_session G H M1 U->
   proc_equiv M1 M2 ->
   types_session G H M2 U.
-Proof with eauto using complete_swap.
+Proof with eauto using types_threads_struct.
   introv TC ST.
-  destruct ST...
-  inv TC...
-  rewrite swap_cat...
-  econstructor...
-  apply swap_partition...
-  unpack;
-    split...
+  destruct M1 as [[p P] | s1 s2].
+  - apply proc_equiv_single in ST as [ST _].
+    rewrite (ST _ eq_refl)...
+  - eapply ts_parallel_inv in TC as (TT & ld & OK).
+    destruct M2 as [[q Q] | s3 s4].
+    + apply proc_equiv_single in ST as [_ ST].
+      specialize (ST _ eq_refl); discriminate.
+    + eapply ts_parallel_intro...
 Qed.
 
 
@@ -3791,7 +3998,7 @@ Lemma proc_equiv_single_inv M1 M2:
   M2 = (single_session M1).
 Proof with eauto.
   introv PE.
-  dependent induction PE...
+  apply proc_equiv_single in PE as [PE _]...
 Qed.
 
 Lemma proc_equiv_single_inv2 M1 M2:
@@ -3799,7 +4006,7 @@ Lemma proc_equiv_single_inv2 M1 M2:
   M2 = (single_session M1).
 Proof with eauto.
   introv PE.
-  dependent induction PE...
+  apply proc_equiv_single in PE as [_ PE]...
 Qed.
 
 Lemma lts_proc_input p q r l1 l2 x s v Q M:
@@ -4921,20 +5128,82 @@ Proof with eauto.
     inv EQ1...
 Qed.
 
-Lemma typ_input_change_payload t q l v t' v': 
+Lemma typ_lts_input_label t q l v t':
   typ_lts t (ainput q l v) t' ->
-  typ_lts t (ainput q l v') t'.
-Proof with eauto.  
+  In l (tbranch_labels t).
+Proof with eauto using in_or_app.
   introv LTS.
-  dependent induction LTS...
+  dependent induction LTS;
+    simpl...
 Qed.
 
-Lemma typ_output_change_payload t q l v t' v': 
+Lemma typ_lts_output_label t q l v t':
+  typ_lts t (aoutput q l v) t' ->
+  In l (tselect_labels t).
+Proof with eauto using in_or_app.
+  introv LTS.
+  dependent induction LTS;
+    simpl...
+Qed.
+
+(** In a well-formed type, the continuation of a transition only depends
+    on the label (labels of sums are distinct) *)
+Lemma typ_lts_input_det t q l v1 v2 t1 t2:
+  wf t ->
+  typ_lts t (ainput q l v1) t1 ->
+  typ_lts t (ainput q l v2) t2 ->
+  t1 = t2.
+Proof with eauto using typ_lts_input_label.
+  introv WF LTS1.
+  gen v2 t2.
+  dependent induction LTS1;
+    introv LTS2;
+    inv LTS2;
+    try (pose proof (wf_sum _ _ WF) as [WF1 WF2])...
+  all: exfalso;
+    eapply tbranch_absurd;
+    [ exact WF
+    | eapply typ_lts_input_label; eassumption
+    | eapply typ_lts_input_label; eassumption ].
+Qed.
+
+Lemma typ_lts_output_det t q l v1 v2 t1 t2:
+  wf t ->
+  typ_lts t (aoutput q l v1) t1 ->
+  typ_lts t (aoutput q l v2) t2 ->
+  t1 = t2.
+Proof with eauto using typ_lts_output_label.
+  introv WF LTS1.
+  gen v2 t2.
+  dependent induction LTS1;
+    introv LTS2;
+    inv LTS2;
+    try (pose proof (wf_sum _ _ WF) as [WF1 WF2])...
+  all: exfalso;
+    eapply tselect_absurd;
+    [ exact WF
+    | eapply typ_lts_output_label; eassumption
+    | eapply typ_lts_output_label; eassumption ].
+Qed.
+
+Lemma typ_input_change_payload t q l v t' v' t'':
+  wf t ->
+  typ_lts t (ainput q l v') t'' ->
+  typ_lts t (ainput q l v) t' ->
+  typ_lts t (ainput q l v') t'.
+Proof.
+  introv WF LTS' LTS.
+  erewrite (typ_lts_input_det _ _ _ _ _ _ _ WF LTS); eauto.
+Qed.
+
+Lemma typ_output_change_payload t q l v t' v' t'':
+  wf t ->
+  typ_lts t (aoutput q l v') t'' ->
   typ_lts t (aoutput q l v) t' ->
   typ_lts t (aoutput q l v') t'.
-Proof with eauto.  
-  introv LTS.
-  dependent induction LTS...
+Proof.
+  introv WF LTS' LTS.
+  erewrite (typ_lts_output_det _ _ _ _ _ _ _ WF LTS); eauto.
 Qed.
 
 Lemma wf_reduction t a t':
@@ -6980,6 +7249,28 @@ Qed.
   
   
 (** Subject reduction *)
+Lemma proc_equiv_closedS M1 M2:
+  proc_equiv M1 M2 ->
+  closedS M1 ->
+  closedS M2.
+Proof.
+  introv PE CL.
+  induction PE;
+    simpl in *;
+    tauto.
+Qed.
+
+Lemma proc_equiv_wfm M1 M2:
+  proc_equiv M1 M2 ->
+  wfm M1 ->
+  wfm M2.
+Proof.
+  introv PE WF.
+  induction PE;
+    simpl in *;
+    tauto.
+Qed.
+
 Lemma subject_reduction U M a M' U':
   closedS M ->
   wfm M ->
@@ -7090,7 +7381,7 @@ Proof
     inverts TS as TC1 TC2 EQ1 EQ2.
     assert (TC1' := TC1).
     assert (TC2' := TC2).
-    inverts TC1' as TC3 TC4 EQ3 CPL EQ4.
+    inverts TC1' as TC3 TC4.
     inverts TC3 as WF3 TC3.
     inverts TC4 as WF4 TC4.
 
@@ -7130,8 +7421,10 @@ Proof
       in H8...
     subst T0 T1.
 
-    eapply typ_input_change_payload with (v' := v) in E1.
-    eapply typ_output_change_payload with (v' := v) in H4.
+    destruct (lts_input_typ _ _ _ _ _ _ _ _ _ LTS1 TC3) as (UP & EUP).
+    destruct (lts_output_typ _ _ _ _ _ _ _ _ _ LTS2 TC4) as (UQ & EUQ).
+    eapply (typ_input_change_payload _ _ _ _ _ _ _ WF3 EUP) in E1.
+    eapply (typ_output_change_payload _ _ _ _ _ _ _ WF4 EUQ) in H4.
 
     eapply io_subject_reduction
       with (P := P) (P' := P')  in E1 as TCINP;
@@ -7143,14 +7436,14 @@ Proof
 
 
     assert (TTC1:
-             types_session G K
+             types_threads G K
                (single_session (p, P'))
                (singleton p tp')).
     subst;
       try econstructor...
 
     assert (TTC2:
-             types_session G K
+             types_threads G K
                (single_session (q, Q'))
                (singleton q tq')).
     subst;
@@ -7183,98 +7476,6 @@ Proof
     rewrite singleton_update in W4...
 
     
-    assert
-      (TTC12:
-        types_session G K
-          ((parallel_session
-              (single_session (p, P'))
-              (single_session (q, Q'))))
-          ((singleton p tp') @@
-             (singleton q tq') @ pf1')).
-  
-   
-    remember (singleton p tp
-                @@ singleton q tq @ pf0 <- p #: tp') as f.
-    remember ( (singleton p tp'
-                  @@ singleton q tq @ pf01)) as g.
-    assert (EQ: f = g).
-    apply functional_extensionality; intros.
-    subst.
-    unfold update, cat, singleton, extend;
-      destruct ( pbeq p x)...
-     assert
-      (P1: partition
-             (singleton p tp'
-                @@ singleton q tq @ pf01)
-             (update_partition ld0 p tp')).
-    rewrite  <-Heqg, <-EQ, Heqf.
-    eapply partition_update_partition...
-
-    remember (singleton p tp' @@ singleton q tq @ pf01 <- q #: tq') as f1.
-    remember (singleton p tp' @@ singleton q tq' @ pf1') as g1.
-    assert (EQ0: f1 = g1).
-    apply functional_extensionality; intros.
-    subst.
-    unfold update, cat, singleton, extend...
-    case_eq ( pbeq q x); introv ABS1...
-    case_eq ( pbeq p x); introv ABS2...
-    rewrite participant_beq_eq in *; subst.
-    unfold disjoint_domain in pf01.
-    assert (K := pf01).
-    specialize K with x.
-    destruct K as [ABS _].
-    assert (EQQ: forall A, singleton x A x = Some A)... 
-    intros; unfold singleton, extend;
-      try rewrite participant_beq_eq_true...
-    rewrite EQQ in ABS...
-    assert (ABS2 : singleton x tq x = None).
-    eapply ABS; try discriminate...
-    unfold singleton, extend in ABS2;
-      try rewrite participant_beq_eq_true in ABS2...
-    discriminate.
-
-    rewrite Heqg1;
-      eapply ts_parallel with
-      (ld := update_partition
-               (update_partition ld0 p tp')
-               q tq')...
-    rewrite  <-Heqg1, <-EQ0, Heqf1, <-Heqg, <-EQ, Heqf.
-    repeat eapply partition_update_partition...
-    
-    rewrite  <-Heqg1, <-EQ0, Heqf1, <-Heqg, <-EQ, Heqf.
-    unpack;
-      split;
-      repeat eapply complete_update_partition...
-    repeat eapply partition_update_partition...
-    eapply admissible_update_partition...
-    eapply admissible_update_partition...
-
-    introv IN.
-    assert (E' := E1).
-    
-    eapply partition_rcomm in IN...
-    destruct IN as [IN | EX];
-      try eapply EQ4 with (D := []) (k := 0) in IN as V;
-      unpack...
-    split.
-    subst.
-    eapply partition_closed_rcomm;
-      try eapply EQ4...
-
-    subst.
-    introv IN2.
-    assert (CMP: dcompliance d1 0 ((d1, 0) :: D)).
-    eapply EQ4...
-
-    eapply elts_dcompliance with
-      (d2 :=  (d1 <- p #: tp') <- q #: tq') (a := (atau (Some (exc p l q))))in CMP...
-    econstructor...
-    
-    
-    intros.
-    eapply EQ4 with (D := []) (k := 0) in H as V; unpack...
-   
-
     move EQ1 at bottom.
 
     assert (pf11:
@@ -7342,9 +7543,9 @@ Proof
       with (d2 := d2) (pf := pf'0) (tp' := tq')
       in pf''...
     unpack.
-    rewrite <-H3 in H5.
+    rewrite <-H1 in H2.
     
-    assert (EQ := H5).
+    assert (EQ := H2).
     subst d1.
           
     assert
@@ -7370,27 +7571,6 @@ Proof
     rewrite EQ in *.
     econstructor...
     + assert
-        (PA3:
-          partition
-            ((singleton p tp
-                @@ singleton q tq @ pf0)
-             <- p #: tp')
-            (update_partition ld0 p tp')).
-      eapply partition_update_partition...
-      assert
-        (PA4:
-          partition
-            (((singleton p tp
-                 @@ singleton q tq @ pf0)
-              <- p #: tp')
-             <- q #: tq')
-            (update_partition
-               (update_partition ld0 p tp')
-               q tq')).
-      eapply partition_update_partition...
-      
-      
-      assert
         (EQENV:
           (((singleton p tp @@ singleton q tq @ pf0) <- p #: tp') <-
              q #: tq') =
@@ -7408,41 +7588,8 @@ Proof
       case_eq (pbeq p x); introv PEQ2;
         try rewrite PEQ2...
 
-      rewrite EQENV...
-
-      eapply ts_parallel with
-        (ld :=
-           (update_partition
-              (update_partition ld0 p tp') q tq'))...
-
-      rewrite <-EQENV...
-      rewrite <-EQENV...
-      split.
-      repeat eapply complete_update_partition...
-      eapply admissible_update_partition...
-       eapply admissible_update_partition...
-
-      introv IN.
-      move EQ4 at bottom.
-      eapply partition_rcomm in IN...
-     destruct IN as [IN | EX];
-       try eapply EQ4 in IN;
-       unpack...
-     split...
-      subst...
-      eapply partition_closed_rcomm...
-      eapply EQ4...
-
-    subst...
-    assert (CMP: dcompliance d1 0 ((d1, 0) :: D))...
-    eapply EQ4...
-    eapply elts_dcompliance
-      with (a := atau(Some (exc p l q))) in CMP...
-    econstructor...
-        
-    introv IN2.
-    
-    eapply EQ4...
+      rewrite EQENV.
+      try subst G; try subst K...
 
     + rewrite <-EQ.
       split.
@@ -7637,19 +7784,11 @@ Proof
     
   - Case r_struct.
     
-    assert (closedS M1).
-    inv H...
-    unfold closedS in CLS; intuition.
-    econstructor...
-    assert (wfm M1).
-    inv H...
-    unfold wfm in WFM;
-      fold wfm in WFM;
-      intuition;
-      econstructor...
-    inv H0.
-    eapply IHLTS...
-    inv H...
+    assert (closedS M1)
+      by (eapply proc_equiv_closedS; eauto).
+    assert (wfm M1)
+      by (eapply proc_equiv_wfm; eauto).
+    eapply types_struct with (M1 := M2)...
 
  - Case r_sum_r.
 
@@ -7736,7 +7875,7 @@ Lemma lts_typ_lts p P a G H M T:
   types G H P T ->
   exists U,
     typ_lts T a U.
-Proof with eauto using lts_input_typ, lts_output_typ, wf_sum,  wf_sum_input_r.
+Proof with eauto using lts_input_typ, lts_output_typ, wf_sum,  wf_sum_input_r, eval_stypes.
   introv WF LTS TC.
   gen G H T.
   dependent induction LTS;
@@ -7878,8 +8017,13 @@ Proof with
     contradiction.
     assert False...
   - inv H3...
-    inv H10.
-    exists ((singleton p (typ_mu  t0 T) @@ d2 @ pf) <- p #: (t0 £ T))...
+    match goal with
+    | K: types _ _ (proc_mu _ _) _ |- _ => inv K
+    end.
+    match goal with
+    | |- exists U', elts (singleton p (typ_mu ?x ?T) @@ ?d @ ?pf) _ _ =>
+        exists ((singleton p (typ_mu x T) @@ d @ pf) <- p #: (x £ T))
+    end.
     econstructor...
   - assert (M1 = single_session (p0, P))...
     subst.
@@ -8006,17 +8150,22 @@ Proof with
     contradiction.
     assert False...
   - clear IHLTS1 IHLTS2.
-    inv H2...
-    inv H6.
-    eapply lts_input_typ in H13;
-      unpack...
-    inv H8.
-    eapply lts_output_typ in H11;
-      unpack...
-    remember ((singleton p T1 @@ singleton q T0 @ pf0) @@ d2 @ pf) as d.
-    exists ((d <- p #: U) <- q #: U0)...
-    econstructor;
-      subst...
+    match goal with
+    | K: types_threads _ _ (parallel_session _ _) _ |- _ => inv K
+    end.
+    repeat match goal with
+    | K: types_threads _ _ (single_session _) _ |- _ => inv K
+    end.
+    match goal with
+    | KP: types _ _ P ?TP, KQ: types _ _ Q ?TQ |- _ =>
+        destruct (lts_input_typ _ _ _ _ _ _ _ _ _ LTS1 KP) as (UP & EP);
+        destruct (lts_output_typ _ _ _ _ _ _ _ _ _ LTS2 KQ) as (UQ & EQ)
+    end.
+    match goal with
+    | |- exists U', elts ?d _ _ =>
+        exists ((d <- p #: UP) <- q #: UQ)
+    end.
+    econstructor...
   - assert (M1 = single_session (p, P))...
     subst.
     eapply IHLTS...

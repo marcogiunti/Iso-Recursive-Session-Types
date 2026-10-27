@@ -2595,7 +2595,7 @@ Qed.
 
 
 (* REVISION -- JULY 2026 *)
-(* Added Lemma elts_dcompliance L3531 *)
+(* Added Lemma elts_dcompliance, below *)
 
 Inductive pol :=
 | input : pol
@@ -2765,8 +2765,7 @@ Hint Constructors sd_elts.
 Inductive oracle_result:=
 | Pair : participant -> participant -> oracle_result
 | Single : participant -> oracle_result
-| Void : oracle_result
-| Exc: oracle_result.
+| Void : oracle_result.
 
 
 Definition domain :=  list participant.
@@ -3130,6 +3129,8 @@ Function W_fifo tbl k (ha : option proc_action) dom :=
               | q :: _ =>
                   if pbeq p q
                   then
+                    W_fifo tbl k ha tl
+                  else
                     match d q with
                     | Some tq =>
                         match top tq with
@@ -3143,175 +3144,92 @@ Function W_fifo tbl k (ha : option proc_action) dom :=
                             W_fifo tbl k ha tl
                         end
                     | _ =>
-                        Exc
+                        W_fifo tbl k ha tl
                     end
-                  else
-                    Exc
               | _ =>
                   W_fifo tbl k ha tl
               end
           | _ =>
-              Exc
+              W_fifo tbl k ha tl
           end
       | _ =>
-          Exc
+          Void
       end
   end.
 
 
-Lemma fifo_pair tbl k opt_act dom p q d tp tq :
+Lemma pbeq_false_neq p q : pbeq p q = false -> p <> q.
+Proof.
+  intros H E; subst; rewrite participant_beq_eq_true in H; discriminate.
+Qed.
+
+(* A participant of dom scanned without result can neither be unfolded
+   nor interact with any other participant *)
+Lemma fifo_void tbl k ha dom d :
+  W_fifo tbl k ha dom = Void ->
   NatMap.find (elt:=part_env) k tbl = Some d ->
-  In p dom ->
-  p <> q ->
-  d p = Some tp ->
-  d q = Some tq ->
-  hd_error (top tp) = Some q ->
-  hd_error (top tq) = Some p ->
-  W_fifo tbl k opt_act dom <> Void.
-Proof with eauto.
-  introv FIND IN1 DIFF EQ1 EQ2 HD1 HD2.
-  dependent induction dom...
-  inv IN1...
-  -  
-    unfold W_fifo; fold W_fifo.
-    rewrite FIND, EQ1.
-    destruct tp...
-    + simpl in HD1; try discriminate.
-    + simpl in HD1; try discriminate.
-    + case_eq (top (typ_sum tp1 tp2)); introv TEQ;
-        rewrite TEQ in *...
-      simpl in HD1; try discriminate.
-      case_eq (pbeq p p0); introv PBEQ...
-      rewrite participant_beq_eq in *; subst.
-      rewrite EQ1, TEQ.
-      rewrite participant_beq_eq_true; discriminate...
-      discriminate.
-    + simpl...
-      case_eq (pbeq p p0); introv PBEQ...
-      rewrite participant_beq_eq in *; subst.
-      rewrite EQ1.
-      simpl...
-      rewrite participant_beq_eq_true; discriminate...
-      discriminate.
-    + simpl...
-      case_eq (pbeq p p0); introv PBEQ...
-      rewrite participant_beq_eq in *; subst.
-      rewrite EQ1.
-      simpl...
-      rewrite participant_beq_eq_true; discriminate...
-      discriminate.
-    + simpl in *; discriminate...
-  - unfold W_fifo; fold W_fifo.
-    rewrite FIND.
-    case_eq (d a); introv EQ...
-    destruct t0; try discriminate...
-    destruct (top (typ_sum t0_1 t0_2)); try discriminate...
-    destruct (pbeq a p0); try discriminate...
-    destruct (d p0); try discriminate...
-    destruct (top t0); try discriminate...
-    destruct (pbeq a p1); try discriminate...
-    simpl...
-    destruct (pbeq a p0); try discriminate...
-    destruct (d p0); try discriminate...
-    destruct (top t1); try discriminate...
-    destruct (pbeq a p1); try discriminate...
-    simpl...
-    destruct (pbeq a p0); try discriminate...
-    destruct (d p0); try discriminate...
-    destruct (top t1); try discriminate...
-    destruct (pbeq a p1); try discriminate...
-    discriminate.
+  forall p tp,
+    In p dom ->
+    d p = Some tp ->
+    (forall X T, tp <> typ_mu X T) /\
+      (forall q tq,
+          p <> q ->
+          d q = Some tq ->
+          hd_error (top tp) <> Some q \/ hd_error (top tq) <> Some p).
+Proof.
+  functional induction (W_fifo tbl k ha dom);
+    intros VOID FIND p0 tp0 IN EQ;
+    try discriminate;
+    try congruence;
+    try (simpl in IN; contradiction).
+  all: try (rewrite FIND in *; subst; simpl in *; contradiction).
+  all: rewrite FIND in e0; inv e0.
+  all: destruct IN as [<- | IN].
+  all: try (eapply IHo; eauto; fail).
+  all: rewrite EQ in *.
+  all: try discriminate.
+  all: try (subst; simpl in *; contradiction).
+  all: try (match goal with H : Some _ = Some _ |- _ => inv H end).
+  all: split; [intros X0 T0 ->; contradiction | intros q0 tq0 NEQ EQ0].
+  all: match goal with
+       | EQ : _ = Some ?t |- hd_error (top ?t) <> _ \/ _ =>
+           destruct (classic (hd_error (top t) = Some q0)) as [HD | HD];
+           [ | left; exact HD]
+       end.
+  all: right.
+  all: repeat match goal with
+           | H : top _ = _ |- _ => rewrite H in *
+           | H : pbeq _ _ = true |- _ => rewrite participant_beq_eq in H; subst
+           | H : pbeq _ _ = false |- _ => apply pbeq_false_neq in H
+           end.
+  all: simpl in *; try discriminate.
+  all: inv HD; try contradiction.
+  all: try (rewrite EQ0 in *; try discriminate).
+  all: repeat match goal with H : Some _ = Some _ |- _ => inv H end.
+  all: repeat match goal with H : top _ = _ |- _ => rewrite H end.
+  all: simpl; try congruence.
+  all: match goal with
+       | y : match top ?t with _ => _ end |- _ =>
+           destruct (top t); simpl in *; congruence
+       | y : match ?t with _ => _ end |- _ =>
+           destruct t; simpl in *; contradiction
+       end.
 Qed.
 
 Lemma fifo_fair: fair W_fifo.
-Proof with eauto using fifo_pair.
+Proof.
   unfold fair; repeat split; intros.
-  - gen p q d.
-    functional induction ( W_fifo tbl k opt_act dom);
-      intros;
-      try discriminate;
-      try inv H;
-      try rewrite H0 in *;
-      try inv e0;
-      try rewrite participant_beq_eq in *;
-      subst...
-    destruct tp...
-    simpl in e2; try discriminate...
-    simpl in e2; try discriminate...
-    repeat eexists...
-    rewrite e5...
-    rewrite e5...
-    repeat eexists...
-    try rewrite e2...
-    rewrite e5...
-    simpl in e2; inv e2.
-    repeat eexists...
-    try rewrite e4...
-    rewrite e5...
-    simpl in e2; try discriminate...
-    inv e2...
-    repeat eexists...
-    rewrite e5...
-    rewrite e5...
-    simpl in e2; try discriminate...
-
-  -  gen p d.
-     functional induction ( W_fifo tbl k opt_act dom);
-       intros;
-       try discriminate;
-       try inv H;
-       try rewrite H0 in *;
-       try inv e0;
-       try rewrite participant_beq_eq in *;
-       subst...
-
-  -  gen p d.
-     functional induction ( W_fifo tbl k opt_act dom);
-       intros;
-       try discriminate;
-       try inv H;
-       try rewrite H0 in *;
-       try inv e0;
-       try rewrite participant_beq_eq in *;
-       subst...
-     + destruct tp...
-       simpl in e2; try discriminate...
-       inv H1;
-         try rewrite H2 in *;
-         inv e1;
-         try discriminate...
-       all:
-         inv H1;
-         try rewrite H2 in *;
-         inv e1;
-         try discriminate...
-     + destruct tp...
-       simpl in e2; try discriminate...
-       inv H1;
-         try rewrite H2 in *;
-         inv e1;
-         try discriminate...
-       all:
-         inv H1;
-         try rewrite H2 in *;
-         inv e1;
-         try discriminate...
-     + destruct tp...
-       simpl in *; try discriminate...
-       inv H1;
-         try rewrite H2 in *;
-         inv e1;
-         try discriminate...
-       all:
-         inv H1;
-         try rewrite H2 in *;
-         inv e1;
-         try discriminate...
-  - assert (hd_error (top tp) = Some q /\ hd_error (top tq) = Some p -> False).
-    introv [ABS1 ABS2]...
-    eapply fifo_pair with (opt_act := opt_act) in H1...
-    eapply NNPP...
-    intuition.
+  - functional induction (W_fifo tbl k opt_act dom);
+      try discriminate; eauto.
+    inv H; rewrite H0 in *; inv e0.
+    rewrite participant_beq_eq in *; subst.
+    exists tp tq; repeat split; eauto;
+      [ rewrite e2 | rewrite e5 ]; reflexivity.
+  - functional induction (W_fifo tbl k opt_act dom);
+      try discriminate; eauto.
+    inv H; rewrite H0 in *; inv e0; eauto.
+  - intros; subst; eapply fifo_void in H as [H _]; eauto.
+  - eapply fifo_void with (p := p) in H as [_ H]; eauto.
 Qed.
 
 
